@@ -22,9 +22,9 @@ mod_root="/data/adb/modules"
 mod_dir="${mod_root}/singbox"
 PROPFILE="${mod_root}/singbox_for_magisk/module.prop"
 
-# delete log files
-[ -f "${run_log}" ] && rm -rf "${run_log}"
-[ -f "${box_log}" ] && rm -rf "${box_log}"
+# clear logs
+echo "" > "${run_log}"
+echo "" > "${box_log}"
 
 # log function
 log() {
@@ -32,16 +32,16 @@ log() {
   now=$(date +"[%Y-%m-%d %H:%M:%S %Z]")
   case $1 in
     info)
-      [ -t 1 ] && echo -e "\033[1;32m${now} [Info]: $2\033[0m" || echo "${now} [Info]: $2" | tee -a "${run_log}"
+      [ -t 1 ] && echo -e "\033[1;32m${now} [INFO]: $2\033[0m" || echo "${now} [Info]: $2" | tee -a "${run_log}"
       ;;
     warn)
-      [ -t 1 ] && echo -e "\033[1;33m${now} [Warn]: $2\033[0m" || echo "${now} [Warn]: $2" | tee -a "${run_log}"
+      [ -t 1 ] && echo -e "\033[1;33m${now} [WARN]: $2\033[0m" || echo "${now} [Warn]: $2" | tee -a "${run_log}"
       ;;
     error)
-      [ -t 1 ] && echo -e "\033[1;31m${now} [Error]: $2\033[0m" || echo "${now} [Error]: $2" | tee -a "${run_log}"
+      [ -t 1 ] && echo -e "\033[1;31m${now} [ERROR]: $2\033[0m" || echo "${now} [Error]: $2" | tee -a "${run_log}"
       ;;
     debug)
-      [ -t 1 ] && echo -e "\033[1;36m${now} [Debug]: $2\033[0m" || echo "${now} [Debug]: $2" | tee -a "${run_log}"
+      [ -t 1 ] && echo -e "\033[1;36m${now} [DEBUG]: $2\033[0m" || echo "${now} [Debug]: $2" | tee -a "${run_log}"
       ;;
     *)
       [ -t 1 ] && echo -e "\033[1;30m${now} [$1]: $2\033[0m" || echo "${now} [$1]: $2" | tee -a "${run_log}"
@@ -93,16 +93,17 @@ chown ${box_user_group} ${bin_path}
 chmod 6755 ${bin_path}
 chmod 0700 $jq
 
-if [[ "${network_mode}" == @(mixed|tun) ]]; then
-  tun_device=$($jq '.outbounds[] | select(.type == "tun") | .device' $config_json)
-  [ -z "$tun_device" ] && tun_device="tun0"
-fi
-
 # get settingss from config.json
 inet4_range=$($jq -r '.dns.fakeip.inet4_range  // empty' $config_json)
 inet6_range=$($jq -r '.dns.fakeip.inet6_range  // empty' $config_json)
 redir_port=$($jq -r '.inbounds[] | select(.type == "redirect") | .listen_port // empty' $config_json)
 tproxy_port=$($jq -r '.inbounds[] | select(.type == "tproxy") | .listen_port // empty' $config_json)
+stack=$($jq -r '.outbounds[] | select(.type == "tun") | .stack' $config_json)
+tun_device=$($jq -r '.outbounds[] | select(.type == "tun") | .device' $config_json)
+
+log debug "fake-ip-range: ${inet4_range}, ${inet6_range}"
+log debug "redir_port: ${redir_port}, tproxy_port: ${tproxy_port}"
+log debug "tun_device: ${tun_device}, stack: ${stack}"
 
 # define intranet ip range
 intranet=(
@@ -137,6 +138,9 @@ intranet6=(
   2001:20::/28
   2001:db8::/32
   2002::/16
+  2408:8000::/20
+  2409:8000::/20
+  240e::/18
   fc00::/7
   fe80::/10
   ff00::/8
@@ -145,6 +149,28 @@ intranet6+=($inet6_range)
 
 # user custom config
 source ${box_dir}/settings.ini
+
+# check network_mode
+if [ -z "${network_mode}" ]; then
+  log warn "network_mode is not set, use default mode: redirect"
+  network_mode="redirect"
+fi
+log debug "network_mode: ${network_mode}"
+
+# create tun
+if [ -n "${tun_device}" ] && [[ "${network_mode}" == @(mixed|tun) ]]; then
+  log debug "use tun device: ${tun_device}"
+  mkdir -p /dev/net
+  [ ! -L /dev/net/tun ] && ln -s /dev/tun /dev/net/tun
+  if [ ! -c "/dev/net/tun" ]; then
+    log error "Cannot create /dev/net/tun. Possible reasons:"
+    log warn "Your system does not support the TUN/TAP driver."
+    log warn "Your system kernel version is not compatible with the TUN/TAP driver."
+    log info "change network_mode to tproxy"
+    sed -i 's/network_mode=.*/network_mode="redirect"/g' "${settings}"
+    exit 1
+  fi
+fi
 
 # check busybox
 busybox_code=$(busybox | busybox grep -oE '[0-9.]*' | head -n 1)

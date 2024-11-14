@@ -2,12 +2,18 @@
 
 source "${0%/*}/settings.sh"
 
+# Check whether busybox is installed or not on the system using command -v
+if ! command -v busybox &> /dev/null; then
+  log error "$(which busybox) command not found."
+  exit 1
+fi
+
 box_is_alive() {
   local PID=$(<"${box_pid}" 2>/dev/null)
   if ! kill -0 "$PID" 2>/dev/null; then
     echo "$(<"${run_log}")"
     log error "${bin_name} service is not running."
-    log error "please check ${run_log} for more information."
+    log error "please check ${run_log} and ${box_log} for more information."
     log error "killing stale pid $PID"
     killall -15 "sing-box" >/dev/null 2>&1 || busybox pkill -15 "sing-box" >/dev/null 2>&1
     [ -f "${box_pid}" ] && rm -f "${box_pid}"
@@ -26,12 +32,9 @@ box_status() {
   if [ -z "$PID" ]; then
     log Error "${bin_name} is not running."
     return 1
+  else
+    log info "${bin_name} is running."
   fi
-
-  stack=$(if [ "${bin_name}" != "clash" ]; then find "${box_dir}" -type f -name "*.json" -exec busybox awk -F'"' '/"stack"/{print $4}' {} +; else busybox awk '!/^ *#/ && /stack: / { print $2;found=1; exit}' "${clash_config}"; fi)
-  TOAST=1 log info "${bin_name} service is running."
-
-  log info "proxy: ${proxy_mode} + network: ${network_mode} $(if [[ "${network_mode}" == @(mixed|tun) ]]; then echo "+ stack: ${stack}"; fi)"
 
   # Get the memory usage of the binary
   rss=$(grep VmRSS /proc/$PID/status | busybox awk '{ print $2 }')
@@ -82,7 +85,7 @@ box_status() {
 
   # Save the process ID to the pid file
   if [ -n "$PID" ]; then
-    log INFO "🥰 $bin_name service is running!!!"
+    log INFO "$bin_name service is running!!!"
     echo -n "$PID" > "${box_pid}"
   fi
 }
@@ -90,7 +93,7 @@ box_status() {
 start_box() {
   # Clear the log file and add the timestamp and delimiter
   # cd /data/adb/box/bin; chmod 755 *
-  log INFO "🤪 Module is working! but no service is running"
+  log INFO "Module is working! but no service is running"
   box_version=$(busybox awk '!/^ *#/ && /version=/ { print $0 }' "$PROPFILE" 2>/dev/null)
 
   timezone=$(getprop persist.sys.timezone)
@@ -99,23 +102,11 @@ start_box() {
   date=$(date)
   cpu_abi=$(getprop ro.product.cpu.abi)
 
-  if [ -t 1 ]; then
-    echo -e "${yellow}${timezone}${normal}"
-    echo -e "${yellow}${sim_operator} / ${sim_type}${normal}"
-    echo -e "${yellow}${date}${normal}"
-    echo -e "${yellow}${box_version}${normal}"
-    echo -e "${yellow}${cpu_abi}${normal}"
-    echo -e "${white}━━━━━━━━━━━━━━━━━━${normal}"
-  else
-    {
-      echo "${timezone}"
-      echo "${sim_operator} / ${sim_type}"
-      echo "${date}"
-      echo "${box_version}"
-      echo "${cpu_abi}"
-      echo "━━━━━━━━━━━━━━━━━━"
-    } | tee -a "${run_log}" > /dev/null 2>&1
-  fi
+  log INFO "${timezone}"
+  log INFO "${sim_operator} / ${sim_type}"
+  log INFO "${date}"
+  log INFO "${box_version}"
+  log INFO "${cpu_abi}"
 
   # Update iptables if bin_name is still running
   if [ -z "$PID" ]; then
@@ -137,20 +128,6 @@ start_box() {
   if [ ! -x "${bin_path}" ]; then
     log error "${bin_path} is not executable."
     exit 1
-  fi
-
-  # create tun
-  if [[ "${network_mode}" == @(mixed|tun) ]]; then
-    mkdir -p /dev/net
-    [ ! -L /dev/net/tun ] && ln -s /dev/tun /dev/net/tun
-    if [ ! -c "/dev/net/tun" ]; then
-      log error "Cannot create /dev/net/tun. Possible reasons:"
-      log warn "Your system does not support the TUN/TAP driver."
-      log warn "Your system kernel version is not compatible with the TUN/TAP driver."
-      log info "change network_mode to tproxy"
-      sed -i 's/network_mode=.*/network_mode="tproxy"/g' "${settings}"
-      exit 1
-    fi
   fi
 
   # run sing-box
@@ -200,15 +177,13 @@ stop_box() {
       rm -f "${box_pid}"
     fi
     log warn "${bin_name} shutting down, service is stopped."
-    TOAST=1 log warn "${bin_name} disconnected."
-
-    [ -t 1 ] && echo -e "${white}━━━━━━━━━━━━━━━━━━${normal}"
+    log warn "${bin_name} disconnected."
   else
     log warn "${bin_name} Not stopped; may still be shutting down or failed to shut down."
     force_stop
   fi
 
-  log INFO "😭 $bin_name shutting down, service is stopped !!!"
+  log INFO "$bin_name shutting down, service is stopped !!!"
 }
 
 force_stop() {
@@ -231,122 +206,48 @@ force_stop() {
   fi
 }
 
-# Check whether busybox is installed or not on the system using command -v
-if ! command -v busybox &> /dev/null; then
-  log error "$(which busybox) command not found."
-  exit 1
-fi
-
-
-# setup iptables
-setup_iptables() {
-    log debug "fake-ip-range: ${inet4_range}, ${inet6_range}"
-    # 使用 iptables 并启用锁等待机制
-    iptables="iptables -w 64"
-
-    # 1. 创建和清空自定义链
-    ${iptables} -t nat -N BOX_EXTERNAL 2>/dev/null
-    ${iptables} -t nat -F BOX_EXTERNAL
-    ${iptables} -t nat -N BOX_LOCAL 2>/dev/null
-    ${iptables} -t nat -F BOX_LOCAL
-    ${iptables} -t nat -N LOCAL_IP_V4 2>/dev/null
-    ${iptables} -t nat -F LOCAL_IP_V4
-
-    # 2. 配置绕过规则（应该最先匹配）
-    # 用户和组绕过配置
-    ${iptables} -t nat -I BOX_LOCAL -m owner --uid-owner "${box_user}" --gid-owner "${box_group}" -j RETURN
-
-    # 3. 处理内网流量（优先级高的绕过规则）
-    for subnet in ${intranet[@]} ; do
-      ${iptables} -t nat -A BOX_EXTERNAL -d ${subnet} -j RETURN
-      ${iptables} -t nat -A BOX_LOCAL -d ${subnet} -j RETURN
-    done
-
-    # 4. DNS 处理（重要的基础服务）
-    if [ -n "${redir_port}" ]; then
-      for proto in tcp udp; do
-        ${iptables} -t nat -A BOX_EXTERNAL -p ${proto} --dport 53 -j REDIRECT --to-ports "${redir_port}"
-        ${iptables} -t nat -A BOX_LOCAL -p ${proto} --dport 53 -j REDIRECT --to-ports "${redir_port}"
-      done
-    fi
-
-    # 5. ICMP 处理
-    if [ -n "${inet4_range}" ]; then
-      ${iptables} -t nat -A BOX_EXTERNAL -d "${inet4_range}" -p icmp -j DNAT --to-destination 127.0.0.1
-      ${iptables} -t nat -A BOX_LOCAL -d "${inet4_range}" -p icmp -j DNAT --to-destination 127.0.0.1
-    fi
-
-    # 6. 特定应用处理（应用专用规则）
-    packages="$(pm list packages -U)"
-    $jq -r '.inbounds[] | select(.type == "tun") | .include_package[] // empty' "$config_json" | while read -r package; do
-      [ -z "$package" ] && continue
-      uid="$(echo "${packages}" | grep -w "$package" | tr -dc '0-9')"
-      [ -z "$uid" ] && continue
-      log debug "Configuring iptables rules for package: ${package}, UID: ${uid}"
-      ${iptables} -t nat -A BOX_LOCAL -p tcp -m owner --uid-owner ${uid} -j REDIRECT --to-ports "${redir_port}"
-      ${iptables} -t nat -A BOX_LOCAL -p udp -m owner --uid-owner ${uid} -j REDIRECT --to-ports "${redir_port}"
-    done
-
-    # 7. 接口处理
-    # 处理本地回环接口流量
-    ${iptables} -t nat -A BOX_EXTERNAL -p tcp -i lo -j REDIRECT --to-ports "${redir_port}"
-    # 处理 AP 接口流量
-    for ap in "${ap_list[@]}"; do
-      ${iptables} -t nat -A BOX_EXTERNAL -p tcp -i "${ap}" -j REDIRECT --to-ports "${redir_port}"
-    done
-    # 添加对 tun 接口的支持
-    ${iptables} -t nat -A BOX_EXTERNAL -p tcp -i tun+ -j REDIRECT --to-ports "${redir_port}"
-
-    # 8. 链接引用（在所有特定规则之后）
-    ${iptables} -t nat -A BOX_EXTERNAL -j LOCAL_IP_V4
-    ${iptables} -t nat -A BOX_LOCAL -j LOCAL_IP_V4
-
-    # 9. 通用流量处理（作为默认规则）
-    ${iptables} -t nat -A BOX_LOCAL -p tcp -j REDIRECT --to-ports "${redir_port}"
-
-    # 10. 主链配置（最后进行）
-    ${iptables} -t nat -I PREROUTING -j BOX_EXTERNAL
-    ${iptables} -t nat -I OUTPUT -j BOX_LOCAL
-
-    # 11. 安全防护（最后添加）
-    ${iptables} -A OUTPUT -d 127.0.0.1 -p tcp -m owner --uid-owner "${box_user}" --gid-owner "${box_group}" -m tcp --dport "${redir_port}" -j REJECT
-}
-
-clear_iptables() {
-    iptables="iptables -w 64"
-
-    # 1. 先从主链中删除引用
-    ${iptables} -t nat -D PREROUTING -j BOX_EXTERNAL 2>/dev/null
-    ${iptables} -t nat -D OUTPUT -j BOX_LOCAL 2>/dev/null
-
-    # 2. 删除 OUTPUT 链中的 REJECT 规则
-    ${iptables} -D OUTPUT -d 127.0.0.1 -p tcp -m owner --uid-owner "${box_user}" --gid-owner "${box_group}" -m tcp --dport "${redir_port}" -j REJECT 2>/dev/null
-
-    # 3. 清空并删除自定义链
-    # 清空链
-    ${iptables} -t nat -F BOX_EXTERNAL 2>/dev/null
-    ${iptables} -t nat -F BOX_LOCAL 2>/dev/null
-    ${iptables} -t nat -F LOCAL_IP_V4 2>/dev/null
-
-    # 删除链
-    ${iptables} -t nat -X BOX_EXTERNAL 2>/dev/null
-    ${iptables} -t nat -X BOX_LOCAL 2>/dev/null
-    ${iptables} -t nat -X LOCAL_IP_V4 2>/dev/null
-
-    log info "iptables rules cleared"
+ipv6_setup() {
+  if [ "${ipv6}" == "true" ]; then
+    log debug "ipv6: enabled"
+    {
+      sysctl -w net.ipv4.ip_forward=1
+      sysctl -w net.ipv6.conf.all.forwarding=1
+      sysctl -w net.ipv6.conf.all.accept_ra=2
+      sysctl -w net.ipv6.conf.wlan0.accept_ra=2
+      sysctl -w net.ipv6.conf.all.disable_ipv6=0
+      sysctl -w net.ipv6.conf.default.disable_ipv6=0
+      sysctl -w net.ipv6.conf.wlan0.disable_ipv6=0
+      # del: block Askes ipv6 completely
+      ip -6 rule del unreachable pref "${pref}"
+      # add: blocks all outgoing IPv6 traffic using the UDP protocol to port 53, effectively preventing DNS queries over IPv6.
+      if ! ip6tables -C OUTPUT -p udp --destination-port 53 -j DROP 2>/dev/null; then
+        ip6tables -w 64 -A OUTPUT -p udp --destination-port 53 -j DROP
+      fi
+    } | tee -a "${run_log}" &> /dev/null
+  else
+    {
+      sysctl -w net.ipv4.ip_forward=1
+      sysctl -w net.ipv6.conf.all.forwarding=0
+      sysctl -w net.ipv6.conf.all.accept_ra=0
+      sysctl -w net.ipv6.conf.wlan0.accept_ra=0
+      sysctl -w net.ipv6.conf.all.disable_ipv6=1
+      sysctl -w net.ipv6.conf.default.disable_ipv6=1
+      sysctl -w net.ipv6.conf.wlan0.disable_ipv6=1
+      # add: block Askes ipv6 completely
+      ip -6 rule add unreachable pref "${pref}"
+    } | tee -a "${run_log}" &> /dev/null
+  fi
 }
 
 case "$1" in
   start)
-    stop_box
     start_box
-    setup_iptables
-    # settings put global http_proxy 127.0.0.1:7890
+    ipv6_setup
+    ${scripts_dir}/iptables.sh "${network_mode}"
     ;;
   stop)
     stop_box
-    clear_iptables
-    # settings delete global http_proxy 127.0.0.1:7890
+    ${scripts_dir}/iptables.sh "clear"
     ;;
   restart)
     stop_box

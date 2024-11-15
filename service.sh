@@ -1,6 +1,6 @@
 #!/system/bin/sh
 
-[ -f "/data/adb/modules/singbox_for_magisk/disable" ] && exit 0
+[ -f "/data/adb/modules/box_for_magisk/disable" ] && exit 0
 
 (
     until [ $(getprop init.svc.bootanim) = "stopped" ]; do

@@ -20,7 +20,7 @@ scripts_dir="${box_dir}/scripts"
 
 mod_root="/data/adb/modules"
 mod_dir="${mod_root}/singbox"
-PROPFILE="${mod_root}/singbox_for_magisk/module.prop"
+PROPFILE="${mod_root}/box_for_magisk/module.prop"
 
 # clear logs
 echo "" > "${run_log}"
@@ -98,8 +98,8 @@ inet4_range=$($jq -r '.dns.fakeip.inet4_range  // empty' $config_json)
 inet6_range=$($jq -r '.dns.fakeip.inet6_range  // empty' $config_json)
 redir_port=$($jq -r '.inbounds[] | select(.type == "redirect") | .listen_port // empty' $config_json)
 tproxy_port=$($jq -r '.inbounds[] | select(.type == "tproxy") | .listen_port // empty' $config_json)
-stack=$($jq -r '.outbounds[] | select(.type == "tun") | .stack' $config_json)
-tun_device=$($jq -r '.outbounds[] | select(.type == "tun") | .device' $config_json)
+stack=$($jq -r '.inbounds[] | select(.type == "tun") | .stack' $config_json)
+tun_device=$($jq -r '.inbounds[] | select(.type == "tun") | .interface_name' $config_json)
 
 log debug "fake-ip-range: ${inet4_range}, ${inet6_range}"
 log debug "redir_port: ${redir_port}, tproxy_port: ${tproxy_port}"
@@ -153,7 +153,7 @@ source ${box_dir}/settings.ini
 # check network_mode
 if [ -z "${network_mode}" ]; then
   log warn "network_mode is not set, use default mode: redirect"
-  network_mode="redirect"
+  network_mode="tproxy"
 fi
 log debug "network_mode: ${network_mode}"
 

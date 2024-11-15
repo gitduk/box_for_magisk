@@ -218,12 +218,12 @@ ipv6_setup() {
       sysctl -w net.ipv6.conf.default.disable_ipv6=0
       sysctl -w net.ipv6.conf.wlan0.disable_ipv6=0
       # del: block Askes ipv6 completely
-      ip -6 rule del unreachable pref "${pref}"
+      ip -6 rule del unreachable pref "${pref}" 2>/dev/null
       # add: blocks all outgoing IPv6 traffic using the UDP protocol to port 53, effectively preventing DNS queries over IPv6.
       if ! ip6tables -C OUTPUT -p udp --destination-port 53 -j DROP 2>/dev/null; then
         ip6tables -w 64 -A OUTPUT -p udp --destination-port 53 -j DROP
       fi
-    } | tee -a "${run_log}" &> /dev/null
+    } | tee -a "${run_log}" > /dev/null 2>&1
   else
     {
       sysctl -w net.ipv4.ip_forward=1
@@ -234,8 +234,8 @@ ipv6_setup() {
       sysctl -w net.ipv6.conf.default.disable_ipv6=1
       sysctl -w net.ipv6.conf.wlan0.disable_ipv6=1
       # add: block Askes ipv6 completely
-      ip -6 rule add unreachable pref "${pref}"
-    } | tee -a "${run_log}" &> /dev/null
+      ip -6 rule add unreachable pref "${pref}" 2>/dev/null
+    } | tee -a "${run_log}" > /dev/null 2>&1
   fi
 }
 
@@ -250,9 +250,14 @@ case "$1" in
     ${scripts_dir}/iptables.sh "clear"
     ;;
   restart)
+    # stop
     stop_box
+    ${scripts_dir}/iptables.sh "clear"
     sleep 0.5
+    # start
     start_box
+    ipv6_setup
+    ${scripts_dir}/iptables.sh "${network_mode}"
     ;;
   status)
     # Check whether the service is running or not

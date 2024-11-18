@@ -8,6 +8,6 @@ if [ -f "${box_pid}" ]; then
     su -c $box_dir/scripts/service.sh stop
 else
     echo "Service is starting,please wait for a moment"
-    su -c $box_dir/scripts/service.sh start
+    su -c $box_dir/scripts/start.sh
     exit
 fi

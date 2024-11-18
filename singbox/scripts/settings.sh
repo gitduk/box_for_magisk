@@ -19,12 +19,12 @@ box_pid="${box_dir}/.box.pid"
 scripts_dir="${box_dir}/scripts"
 
 mod_root="/data/adb/modules"
-mod_dir="${mod_root}/singbox"
+mod_dir="${mod_root}/box_for_magisk"
 PROPFILE="${mod_root}/box_for_magisk/module.prop"
 
-# clear logs
-echo "" > "${run_log}"
-echo "" > "${box_log}"
+settings="${box_dir}/settings.ini"
+config_json="${box_dir}/config.json"
+jq="${box_dir}/bin/jq"
 
 # log function
 log() {
@@ -52,46 +52,13 @@ log() {
   esac
 }
 
-# check box settings
-settings="${box_dir}/settings.ini"
-if [ ! -f "$settings" ]; then
-  log ERROR "Cannot find ${box_dir}/settings.ini"
-  exit 1
-fi
-
-# check sing-box config
-config_json="${box_dir}/config.json"
-if [ ! -f "$config_json" ]; then
-  log ERROR "Cannot find ${box_dir}/config.json"
-  exit 1
-fi
-
-# check jq command
-jq="${box_dir}/bin/jq"
-if [ ! -f "$jq" ]; then
-  log ERROR "Cannot find ${box_dir}/bin/jq"
-  exit 1
-fi
-
-# check sing-box command
-if [ ! -f "$bin_path" ]; then
-  log ERROR "Cannot find ${bin_path}"
-  exit 1
-fi
-
 # iptables settings
 fwmark="16777216/16777216"
 table="2024"
 pref="100"
 box_user="root"
 box_group="net_admin"
-
-# set permission
 box_user_group="${box_user}:${box_group}"
-chown -R ${box_user_group} ${box_dir}
-chown ${box_user_group} ${bin_path}
-chmod 6755 ${bin_path}
-chmod 0700 $jq
 
 # get settingss from config.json
 inet4_range=$($jq -r '.dns.fakeip.inet4_range  // empty' $config_json)
@@ -100,10 +67,6 @@ redir_port=$($jq -r '.inbounds[] | select(.type == "redirect") | .listen_port //
 tproxy_port=$($jq -r '.inbounds[] | select(.type == "tproxy") | .listen_port // empty' $config_json)
 stack=$($jq -r '.inbounds[] | select(.type == "tun") | .stack' $config_json)
 tun_device=$($jq -r '.inbounds[] | select(.type == "tun") | .interface_name' $config_json)
-
-log debug "fake-ip-range: ${inet4_range}, ${inet6_range}"
-log debug "redir_port: ${redir_port}, tproxy_port: ${tproxy_port}"
-log debug "tun_device: ${tun_device}, stack: ${stack}"
 
 # define intranet ip range
 intranet=(
@@ -149,34 +112,3 @@ intranet6+=($inet6_range)
 
 # user custom config
 source ${box_dir}/settings.ini
-
-# check network_mode
-if [ -z "${network_mode}" ]; then
-  log warn "network_mode is not set, use default mode: redirect"
-  network_mode="tproxy"
-fi
-log debug "network_mode: ${network_mode}"
-
-# create tun
-if [ -n "${tun_device}" ] && [[ "${network_mode}" == @(mixed|tun) ]]; then
-  log debug "use tun device: ${tun_device}"
-  mkdir -p /dev/net
-  [ ! -L /dev/net/tun ] && ln -s /dev/tun /dev/net/tun
-  if [ ! -c "/dev/net/tun" ]; then
-    log error "Cannot create /dev/net/tun. Possible reasons:"
-    log warn "Your system does not support the TUN/TAP driver."
-    log warn "Your system kernel version is not compatible with the TUN/TAP driver."
-    log info "change network_mode to tproxy"
-    sed -i 's/network_mode=.*/network_mode="redirect"/g' "${settings}"
-    exit 1
-  fi
-fi
-
-# check busybox
-busybox_code=$(busybox | busybox grep -oE '[0-9.]*' | head -n 1)
-if [ "$(echo "${busybox_code}" | busybox awk -F. '{printf "%03d%03d%03d\n", $1, $2, $3}')" -lt "$(echo "1.36.1" | busybox awk -F. '{printf "%03d%03d%03d\n", $1, $2, $3}')" ]; then
-  log info "Current $(which busybox) v${busybox_code}"
-  log warn "Please update your busybox to v1.36.1+"
-else
-  log info "Current $(which busybox) v${busybox_code}"
-fi

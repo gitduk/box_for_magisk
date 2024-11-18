@@ -7,10 +7,10 @@
         sleep 10
     done
 
-    if [ -f "/data/adb/singbox/scripts/service.sh" ]; then
+    if [ -f "/data/adb/singbox/scripts/start.sh" ]; then
         chmod 755 /data/adb/singbox/scripts/*
-        /data/adb/singbox/scripts/service.sh start
+        /data/adb/singbox/scripts/start.sh
     else
-        echo "File '/data/adb/singbox/scripts/service.sh' not found"
+        echo "File '/data/adb/singbox/scripts/start.sh' not found"
     fi
 )&

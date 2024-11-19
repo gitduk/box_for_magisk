@@ -60,6 +60,12 @@ box_user="root"
 box_group="net_admin"
 box_user_group="${box_user}:${box_group}"
 
+# set permission
+chown -R ${box_user_group} ${box_dir}
+chown ${box_user_group} ${bin_path}
+chmod 6755 ${bin_path}
+chmod 0700 $jq
+
 # get settingss from config.json
 inet4_range=$($jq -r '.dns.fakeip.inet4_range  // empty' $config_json)
 inet6_range=$($jq -r '.dns.fakeip.inet6_range  // empty' $config_json)

@@ -61,7 +61,6 @@ redirect() {
     [ -z "$package" ] && continue
     uid="$(echo "${packages}" | grep -w "$package" | tr -dc '0-9')"
     [ -z "$uid" ] && continue
-    log debug "Configuring iptables rules for package: ${package}, UID: ${uid}"
     ${iptables} -t nat -A BOX_LOCAL -p tcp -m owner --uid-owner ${uid} -j REDIRECT --to-ports "${redir_port}"
     ${iptables} -t nat -A BOX_LOCAL -p udp -m owner --uid-owner ${uid} -j REDIRECT --to-ports "${redir_port}"
   done
@@ -168,7 +167,6 @@ tproxy() {
     [ -z "$package" ] && continue
     uid="$(echo "${packages}" | grep -w "$package" | tr -dc '0-9')"
     [ -z "$uid" ] && continue
-    log debug "Configuring iptables rules for package: ${package}, UID: ${uid}"
     ${iptables} -t mangle -A BOX_LOCAL -p tcp -m owner --uid-owner ${uid} -j MARK --set-xmark ${fwmark}
     ${iptables} -t mangle -A BOX_LOCAL -p udp -m owner --uid-owner ${uid} -j MARK --set-xmark ${fwmark}
   done
@@ -186,12 +184,31 @@ tproxy() {
   ${iptables} -t mangle -A BOX_LOCAL -p udp -j MARK --set-mark "${fwmark}"
 }
 
-mixed() {
-  log info "use mixed"
-}
-
 tun() {
-  log info "use tun"
+  iptables="iptables -w 64"
+
+  [[ -z "${tun_device}" ]] && {log error "tun device not found"; exit 1;}
+
+  if [ "$1" == "-d" ]; then
+    ${iptables} -D FORWARD -i "${tun_device}" -j ACCEPT
+    ${iptables} -D FORWARD -o "${tun_device}" -j ACCEPT
+    return 0
+  fi
+
+  # clear up iptables
+  tproxy -d 2>/dev/null
+  redirect -d 2>/dev/null
+
+  # check if tun device is present
+  busybox ifconfig | grep -q "${tun_device}" || {log error "tun device ${tun_device} not found"; exit 1;}
+
+  ${iptables} -I FORWARD -i "${tun_device}" -j ACCEPT
+  ${iptables} -I FORWARD -o "${tun_device}" -j ACCEPT
+
+  sysctl -w net.ipv4.ip_forward=1
+  sysctl -w net.ipv4.conf.default.rp_filter=2
+  sysctl -w net.ipv4.conf.all.rp_filter=2
+
 }
 
 # clear iptables rules
@@ -199,7 +216,6 @@ if [ "$1" == "clear" ]; then
   case "${network_mode}" in
     redirect) redirect -d;;
     tproxy) tproxy -d;;
-    mixed) mixed -d;;
     tun) tun -d;;
     *) log error "network_mode: ${network_mode} not found"; exit 1;;
   esac
@@ -214,10 +230,9 @@ fi
 case "$1" in
   redirect) redirect;;
   tproxy) tproxy;;
-  mixed) mixed;;
   tun) tun;;
   *)
     echo "${red}$0 $1 no found${normal}"
-    echo "${yellow}usage${normal}: ${green}$0${normal} {${yellow}redirect|tproxy|mixed|tun|clear${normal}}"
+    echo "${yellow}usage${normal}: ${green}$0${normal} {${yellow}redirect|tproxy|tun|clear${normal}}"
     ;;
 esac

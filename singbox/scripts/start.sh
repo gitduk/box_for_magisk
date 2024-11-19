@@ -12,8 +12,8 @@ else
 fi
 
 # clear logs
-echo "" > "${run_log}"
-echo "" > "${box_log}"
+echo -n "" > "${run_log}"
+echo -n "" > "${box_log}"
 
 # check box settings
 if [ ! -f "$settings" ]; then
@@ -41,15 +41,9 @@ fi
 
 # check network_mode
 if [ -z "${network_mode}" ]; then
-  log warn "network_mode is not set"
+  log ERROR "network_mode is not set"
   exit 1
 fi
-
-# set permission
-chown -R ${box_user_group} ${box_dir}
-chown ${box_user_group} ${bin_path}
-chmod 6755 ${bin_path}
-chmod 0700 $jq
 
 # create tun
 if [ -n "${tun_device}" ] && [[ "${network_mode}" == @(mixed|tun) ]]; then
@@ -77,12 +71,6 @@ start_inotifyd() {
   inotifyd "${scripts_dir}/inotifyd.sh" "${mod_dir}" > "/dev/null" 2>&1 &
   log info "DONE"
 }
-
-# sing-box config
-log debug "fake-ip-range: ${inet4_range}, ${inet6_range}"
-log debug "redir_port: ${redir_port}, tproxy_port: ${tproxy_port}"
-log debug "tun_device: ${tun_device}, stack: ${stack}"
-log debug "network_mode: ${network_mode}"
 
 ${scripts_dir}/service.sh start
 start_inotifyd

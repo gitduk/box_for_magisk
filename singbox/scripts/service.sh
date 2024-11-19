@@ -102,11 +102,11 @@ start_box() {
   date=$(date)
   cpu_abi=$(getprop ro.product.cpu.abi)
 
-  log INFO "${timezone}"
-  log INFO "${sim_operator} / ${sim_type}"
-  log INFO "${date}"
-  log INFO "${box_version}"
-  log INFO "${cpu_abi}"
+  log info "${timezone}"
+  log info "${sim_operator} / ${sim_type}"
+  log info "${date}"
+  log info "${box_version}"
+  log info "${cpu_abi}"
 
   # Update iptables if bin_name is still running
   if [ -z "$PID" ]; then
@@ -132,6 +132,13 @@ start_box() {
 
   # run sing-box
   log info "start ${bin_name} service."
+
+  # sing-box config
+  log debug "fake-ip-range: ${inet4_range}, ${inet6_range}"
+  log debug "redir_port: ${redir_port}, tproxy_port: ${tproxy_port}"
+  log debug "tun_device: ${tun_device}, stack: ${stack}"
+  log debug "network_mode: ${network_mode}"
+
   ulimit -SHn 1000000
   # Use ulimit to limit the memory usage of a process to 200MB
   # ulimit -v 200000  # Set the virtual memory limit in KB
@@ -176,8 +183,6 @@ stop_box() {
     if [ -f "${box_pid}" ]; then
       rm -f "${box_pid}"
     fi
-    log warn "${bin_name} shutting down, service is stopped."
-    log warn "${bin_name} disconnected."
   else
     log warn "${bin_name} Not stopped; may still be shutting down or failed to shut down."
     force_stop
@@ -223,7 +228,7 @@ ipv6_setup() {
       if ! ip6tables -C OUTPUT -p udp --destination-port 53 -j DROP 2>/dev/null; then
         ip6tables -w 64 -A OUTPUT -p udp --destination-port 53 -j DROP
       fi
-    } | tee -a "${run_log}" > /dev/null 2>&1
+    } > /dev/null 2>&1
   else
     {
       sysctl -w net.ipv4.ip_forward=1
@@ -235,7 +240,7 @@ ipv6_setup() {
       sysctl -w net.ipv6.conf.wlan0.disable_ipv6=1
       # add: block Askes ipv6 completely
       ip -6 rule add unreachable pref "${pref}" 2>/dev/null
-    } | tee -a "${run_log}" > /dev/null 2>&1
+    } > /dev/null 2>&1
   fi
 }
 

@@ -146,6 +146,9 @@ tproxy() {
     ${iptables} -t mangle -A BOX_EXTERNAL -p udp -i "${ap}" -j TPROXY --on-port "${tproxy_port}" --tproxy-mark "${fwmark}"
   done
 
+  # 解决 youtube, google play 无法上网的问题
+  ${iptables} -t mangle -I PREROUTING -p udp -m multiport --dport 80,443 -j DROP
+
   # 将 BOX_EXTERNAL 链插入到 PREROUTING 链的开头
   ${iptables} -t mangle -I PREROUTING -j BOX_EXTERNAL
 
@@ -187,20 +190,22 @@ tproxy() {
 tun() {
   iptables="iptables -w 64"
 
-  [[ -z "${tun_device}" ]] && {log error "tun device not found"; exit 1;}
+  if [[ -z "${tun_device}" ]]; then
+    log error "variable tun_device not set"
+    exit 1
+  fi
 
-  if [ "$1" == "-d" ]; then
+  if [[ "$1" == "-d" ]]; then
     ${iptables} -D FORWARD -i "${tun_device}" -j ACCEPT
     ${iptables} -D FORWARD -o "${tun_device}" -j ACCEPT
     return 0
   fi
 
-  # clear up iptables
-  tproxy -d 2>/dev/null
-  redirect -d 2>/dev/null
-
   # check if tun device is present
-  busybox ifconfig | grep -q "${tun_device}" || {log error "tun device ${tun_device} not found"; exit 1;}
+  if ! busybox ifconfig | grep -q "${tun_device}" 2>/dev/null; then
+    log error "tun device ${tun_device} not found"
+    exit 1
+  fi
 
   ${iptables} -I FORWARD -i "${tun_device}" -j ACCEPT
   ${iptables} -I FORWARD -o "${tun_device}" -j ACCEPT
@@ -214,23 +219,47 @@ tun() {
 # clear iptables rules
 if [ "$1" == "clear" ]; then
   case "${network_mode}" in
-    redirect) redirect -d;;
-    tproxy) tproxy -d;;
-    tun) tun -d;;
+    redirect)
+      log info "clear iptable rules for redirect mode"
+      redirect -d;;
+    tproxy)
+      log info "clear iptable rules for tproxy mode"
+      tproxy -d;;
+    tun)
+      log info "clear iptable rules for tun mode"
+      tun -d;;
     *) log error "network_mode: ${network_mode} not found"; exit 1;;
   esac
+  log info "iptables rules cleared"
+
+  # clear ipv6 rules
   if [ "${ipv6}" = "true" ]; then
     ip6tables -w 64 -D OUTPUT -p udp --destination-port 53 -j DROP 2>/dev/null
   fi
-  log info "iptables rules cleared"
+
   exit 0
 fi
 
 # add iptables rules
 case "$1" in
-  redirect) redirect;;
-  tproxy) tproxy;;
-  tun) tun;;
+  redirect)
+    log info "set iptable rules for redirect mode"
+    tproxy -d 2>/dev/null
+    tun -d 2>/dev/null
+    redirect
+    ;;
+  tproxy)
+    log info "set iptable rules for tproxy mode"
+    redirect -d 2>/dev/null
+    tun -d 2>/dev/null
+    tproxy
+    ;;
+  tun)
+    log info "set iptable rules for tun mode"
+    redirect -d 2>/dev/null
+    tproxy -d 2>/dev/null
+    tun
+    ;;
   *)
     echo "${red}$0 $1 no found${normal}"
     echo "${yellow}usage${normal}: ${green}$0${normal} {${yellow}redirect|tproxy|tun|clear${normal}}"

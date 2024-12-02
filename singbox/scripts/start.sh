@@ -45,6 +45,12 @@ if [ -z "${network_mode}" ]; then
   exit 1
 fi
 
+# set permission
+chown -R ${box_user_group} ${box_dir}
+chown ${box_user_group} ${bin_path}
+chmod 6755 ${bin_path}
+chmod 0700 $jq
+
 # create tun
 if [ -n "${tun_device}" ] && [[ "${network_mode}" == @(mixed|tun) ]]; then
   log debug "use tun device: ${tun_device}"

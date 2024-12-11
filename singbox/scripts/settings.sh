@@ -60,13 +60,33 @@ box_user="root"
 box_group="net_admin"
 box_user_group="${box_user}:${box_group}"
 
+# check jq command
+if [ ! -f "$jq" ]; then
+  log ERROR "Cannot find ${box_dir}/bin/jq"
+  exit 1
+else
+  chmod 0700 $jq
+fi
+
+# Check jq permissions
+if [ ! -x "${jq}" ]; then
+  log ERROR "${jq} is not executable."
+  exit 1
+fi
+
+# check sing-box config
+if [ ! -f "$config_json" ]; then
+  log ERROR "Cannot find ${box_dir}/config.json"
+  exit 1
+fi
+
 # get settingss from config.json
 inet4_range=$($jq -r '.dns.fakeip.inet4_range  // empty' $config_json)
 inet6_range=$($jq -r '.dns.fakeip.inet6_range  // empty' $config_json)
 redir_port=$($jq -r '.inbounds[] | select(.type == "redirect") | .listen_port // empty' $config_json)
 tproxy_port=$($jq -r '.inbounds[] | select(.type == "tproxy") | .listen_port // empty' $config_json)
-stack=$($jq -r '.inbounds[] | select(.type == "tun") | .stack' $config_json)
-tun_device=$($jq -r '.inbounds[] | select(.type == "tun") | .interface_name' $config_json)
+stack=$($jq -r '.inbounds[] | select(.type == "tun") | .stack // empty' $config_json)
+tun_device=$($jq -r '.inbounds[] | select(.type == "tun") | .interface_name // empty' $config_json)
 
 # define intranet ip range
 intranet=(
@@ -109,6 +129,12 @@ intranet6=(
   ff00::/8
 )
 intranet6+=($inet6_range)
+
+# check box settings
+if [ ! -f "$settings" ]; then
+  log ERROR "Cannot find ${box_dir}/settings.ini"
+  exit 1
+fi
 
 # user custom config
 source ${box_dir}/settings.ini

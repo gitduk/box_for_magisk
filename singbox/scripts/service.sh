@@ -8,6 +8,37 @@ if ! command -v busybox &> /dev/null; then
   exit 1
 fi
 
+# check sing-box command
+if [ ! -f "$bin_path" ]; then
+  log ERROR "Cannot find ${bin_path}"
+  exit 1
+fi
+
+# check network_mode
+if [ -z "${network_mode}" ]; then
+  log ERROR "network_mode is not set"
+  exit 1
+fi
+
+# create tun
+if [ -n "${tun_device}" ] && [[ "${network_mode}" == @(mixed|tun) ]]; then
+  log debug "use tun device: ${tun_device}"
+  mkdir -p /dev/net
+  [ ! -L /dev/net/tun ] && ln -s /dev/tun /dev/net/tun
+  if [ ! -c "/dev/net/tun" ]; then
+    log error "Cannot create /dev/net/tun. Possible reasons:"
+    log warn "Your system does not support the TUN/TAP driver."
+    log warn "Your system kernel version is not compatible with the TUN/TAP driver."
+    log info "change network_mode to tproxy"
+    sed -i 's/network_mode=.*/network_mode="redirect"/g' "${settings}"
+    exit 1
+  fi
+fi
+
+# clear logs
+echo -n "" > "${run_log}"
+echo -n "" > "${box_log}"
+
 box_is_alive() {
   local PID=$(<"${box_pid}" 2>/dev/null)
   if ! kill -0 "$PID" 2>/dev/null; then
@@ -90,43 +121,55 @@ box_status() {
   fi
 }
 
+system_info() {
+    box_version=$(busybox awk '!/^ *#/ && /version=/ { print $0 }' "$PROPFILE" 2>/dev/null)
+    timezone=$(getprop persist.sys.timezone)
+    sim_operator=$(getprop gsm.sim.operator.alpha)
+    sim_type=$(getprop gsm.network.type)
+    date=$(date)
+    cpu_abi=$(getprop ro.product.cpu.abi)
+
+    log info "${timezone}"
+    log info "${sim_operator} / ${sim_type}"
+    log info "${date}"
+    log info "${box_version}"
+    log info "${cpu_abi}"
+}
+
+renew_iptables() {
+    # Update iptables if bin_name is still running
+    if [ -z "$PID" ]; then
+      PID="$(busybox pidof "${bin_name}")"
+    fi
+
+    # if sing-box is still running, stop it
+    if [ -n "$PID" ]; then
+      pid_name="${box_dir}/pid_name.txt"
+      ps -p $PID -o comm= > "${pid_name}"
+      sed -i '/^[[:space:]]*$/d' "${pid_name}"
+      log debug "$(<"${pid_name}")(PID: $PID) service is still running, auto restart box."
+      rm -f "${pid_name}"
+      stop_box
+      exit 1
+    fi
+
+    return 0
+}
+
 start_box() {
   # Clear the log file and add the timestamp and delimiter
   # cd /data/adb/box/bin; chmod 755 *
   log INFO "Module is working! but no service is running"
-  box_version=$(busybox awk '!/^ *#/ && /version=/ { print $0 }' "$PROPFILE" 2>/dev/null)
+  system_info
 
-  timezone=$(getprop persist.sys.timezone)
-  sim_operator=$(getprop gsm.sim.operator.alpha)
-  sim_type=$(getprop gsm.network.type)
-  date=$(date)
-  cpu_abi=$(getprop ro.product.cpu.abi)
-
-  log info "${timezone}"
-  log info "${sim_operator} / ${sim_type}"
-  log info "${date}"
-  log info "${box_version}"
-  log info "${cpu_abi}"
-
-  # Update iptables if bin_name is still running
-  if [ -z "$PID" ]; then
-    PID="$(busybox pidof "${bin_name}")"
-  fi
-
-  # sing-box is still running, renew iptables
-  if [ -n "$PID" ]; then
-    pid_name="${box_dir}/pid_name.txt"
-    ps -p $PID -o comm= > "${pid_name}"
-    sed -i '/^[[:space:]]*$/d' "${pid_name}"
-    log debug "$(<"${pid_name}")(PID: $PID) service is still running, auto restart BOX."
-    rm -f "${pid_name}"
-    stop_box
-    exit 1
-  fi
+  # set permission
+  chown -R ${box_user_group} ${box_dir}
+  chown ${box_user_group} ${bin_path}
+  chmod 6755 ${bin_path}
 
   # Check permissions
   if [ ! -x "${bin_path}" ]; then
-    log error "${bin_path} is not executable."
+    log ERROR "${bin_path} is not executable."
     exit 1
   fi
 
@@ -161,6 +204,10 @@ start_box() {
   done
   box_status
 
+  log info "set iptable rules"
+  ${scripts_dir}/iptables.sh "${network_mode}"
+  ipv6_setup
+
   true
 }
 
@@ -189,6 +236,9 @@ stop_box() {
   fi
 
   log INFO "$bin_name shutting down, service is stopped !!!"
+
+  log info "clear iptable rules"
+  ${scripts_dir}/iptables.sh "clear"
 }
 
 force_stop() {
@@ -226,9 +276,9 @@ ipv6_setup() {
       ip -6 rule del unreachable pref "${pref}" 2>/dev/null
       # add: blocks all outgoing IPv6 traffic using the UDP protocol to port 53, effectively preventing DNS queries over IPv6.
       if ! ip6tables -C OUTPUT -p udp --destination-port 53 -j DROP 2>/dev/null; then
-        ip6tables -w 64 -A OUTPUT -p udp --destination-port 53 -j DROP
+        ip6tables -w 64 -A OUTPUT -p udp --destination-port 53 -j DROP 2>/dev/null
       fi
-    } > /dev/null 2>&1
+    } &> /dev/null
   else
     {
       sysctl -w net.ipv4.ip_forward=1
@@ -240,29 +290,27 @@ ipv6_setup() {
       sysctl -w net.ipv6.conf.wlan0.disable_ipv6=1
       # add: block Askes ipv6 completely
       ip -6 rule add unreachable pref "${pref}" 2>/dev/null
-    } > /dev/null 2>&1
+      # del: blocks all outgoing IPv6 traffic using the UDP protocol to port 53, effectively preventing DNS queries over IPv6.
+      if ip6tables -C OUTPUT -p udp --destination-port 53 -j DROP 2>/dev/null; then
+        ip6tables -w 64 -D OUTPUT -p udp --destination-port 53 -j DROP 2>/dev/null
+      fi
+    } &> /dev/null
   fi
 }
 
 case "$1" in
   start)
     start_box
-    ipv6_setup
-    ${scripts_dir}/iptables.sh "${network_mode}"
     ;;
   stop)
     stop_box
-    ${scripts_dir}/iptables.sh "clear"
     ;;
   restart)
     # stop
     stop_box
-    ${scripts_dir}/iptables.sh "clear"
     sleep 0.5
     # start
     start_box
-    ipv6_setup
-    ${scripts_dir}/iptables.sh "${network_mode}"
     ;;
   status)
     # Check whether the service is running or not

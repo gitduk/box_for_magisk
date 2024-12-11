@@ -7,6 +7,8 @@ redirect() {
   iptables="iptables -w 64"
 
   if [ "$1" == "-d" ]; then
+    log info "clear iptable rules for redirect mode"
+
     ${iptables} -t nat -D PREROUTING -j BOX_EXTERNAL 2>/dev/null
     ${iptables} -t nat -D OUTPUT -j BOX_LOCAL 2>/dev/null
 
@@ -23,6 +25,7 @@ redirect() {
     return 0
   fi
 
+  log info "set iptable rules for redirect mode"
   # 1. 创建和清空自定义链
   ${iptables} -t nat -N BOX_EXTERNAL 2>/dev/null
   ${iptables} -t nat -F BOX_EXTERNAL
@@ -50,10 +53,10 @@ redirect() {
   fi
 
   # 5. ICMP 处理
-  if [ -n "${inet4_range}" ]; then
-    ${iptables} -t nat -A BOX_EXTERNAL -d "${inet4_range}" -p icmp -j DNAT --to-destination 127.0.0.1
-    ${iptables} -t nat -A BOX_LOCAL -d "${inet4_range}" -p icmp -j DNAT --to-destination 127.0.0.1
-  fi
+  # if [ -n "${inet4_range}" ]; then
+  #   ${iptables} -t nat -A BOX_EXTERNAL -d "${inet4_range}" -p icmp -j DNAT --to-destination 127.0.0.1
+  #   ${iptables} -t nat -A BOX_LOCAL -d "${inet4_range}" -p icmp -j DNAT --to-destination 127.0.0.1
+  # fi
 
   # 6. 特定应用处理（应用专用规则）
   packages="$(pm list packages -U)"
@@ -68,10 +71,12 @@ redirect() {
   # 7. 接口处理
   # 处理本地回环接口流量
   ${iptables} -t nat -A BOX_EXTERNAL -p tcp -i lo -j REDIRECT --to-ports "${redir_port}"
+
   # 处理 AP 接口流量
   for ap in "${ap_list[@]}"; do
     ${iptables} -t nat -A BOX_EXTERNAL -p tcp -i "${ap}" -j REDIRECT --to-ports "${redir_port}"
   done
+
   # 添加对 tun 接口的支持
   ${iptables} -t nat -A BOX_EXTERNAL -p tcp -i tun+ -j REDIRECT --to-ports "${redir_port}"
 
@@ -95,8 +100,11 @@ tproxy() {
   iptables="iptables -w 64"
 
   if [ "$1" == "-d" ]; then
+    log info "clear iptable rules for tproxy mode"
+
     # 从主链中移除自定义链的引用
     ${iptables} -t mangle -D PREROUTING -j BOX_EXTERNAL 2>/dev/null
+    ${iptables} -t mangle -D OUTPUT -j BOX_LOCAL 2>/dev/null
 
     # 清空并删除自定义链
     ${iptables} -t mangle -F BOX_EXTERNAL 2>/dev/null
@@ -112,6 +120,7 @@ tproxy() {
     return 0
   fi
 
+  log info "set iptable rules for tproxy mode"
   # 配置策略路由：将带有特定 mark 的流量转发到指定路由表
   ip rule add fwmark "${fwmark}" table "${table}" pref "${pref}"
   # 在路由表中添加本地路由规则
@@ -132,7 +141,7 @@ tproxy() {
   done
 
   # 创建并清空用于存放本地 IP 规则的链
-  ${iptables} -t mangle -N LOCAL_IP_V4
+  ${iptables} -t mangle -N LOCAL_IP_V4 2>/dev/null
   ${iptables} -t mangle -F LOCAL_IP_V4
   ${iptables} -t mangle -A BOX_EXTERNAL -j LOCAL_IP_V4
 
@@ -146,15 +155,12 @@ tproxy() {
     ${iptables} -t mangle -A BOX_EXTERNAL -p udp -i "${ap}" -j TPROXY --on-port "${tproxy_port}" --tproxy-mark "${fwmark}"
   done
 
-  # 解决 youtube, google play 无法上网的问题
-  ${iptables} -t mangle -I PREROUTING -p udp -m multiport --dport 80,443 -j DROP
-
   # 将 BOX_EXTERNAL 链插入到 PREROUTING 链的开头
   ${iptables} -t mangle -I PREROUTING -j BOX_EXTERNAL
 
   # === 处理本地产生的流量（OUTPUT 链）===
   # 创建并清空 BOX_LOCAL 链
-  ${iptables} -t mangle -N BOX_LOCAL
+  ${iptables} -t mangle -N BOX_LOCAL 2>/dev/null
   ${iptables} -t mangle -F BOX_LOCAL
 
   # 放行 sing-box 程序自身的流量，避免循环
@@ -185,6 +191,9 @@ tproxy() {
   # 给所有其他 TCP/UDP 流量打上标记
   ${iptables} -t mangle -A BOX_LOCAL -p tcp -j MARK --set-mark "${fwmark}"
   ${iptables} -t mangle -A BOX_LOCAL -p udp -j MARK --set-mark "${fwmark}"
+
+  # 将 BOX_LOCAL 链插入到 OUTPUT 链
+  ${iptables} -t mangle -I OUTPUT -j BOX_LOCAL
 }
 
 tun() {
@@ -196,6 +205,7 @@ tun() {
   fi
 
   if [[ "$1" == "-d" ]]; then
+    log info "clear iptable rules for tun mode"
     ${iptables} -D FORWARD -i "${tun_device}" -j ACCEPT
     ${iptables} -D FORWARD -o "${tun_device}" -j ACCEPT
     return 0
@@ -207,6 +217,7 @@ tun() {
     exit 1
   fi
 
+  log info "set iptable rules for tun mode"
   ${iptables} -I FORWARD -i "${tun_device}" -j ACCEPT
   ${iptables} -I FORWARD -o "${tun_device}" -j ACCEPT
 
@@ -220,42 +231,29 @@ tun() {
 if [ "$1" == "clear" ]; then
   case "${network_mode}" in
     redirect)
-      log info "clear iptable rules for redirect mode"
       redirect -d;;
     tproxy)
-      log info "clear iptable rules for tproxy mode"
       tproxy -d;;
     tun)
-      log info "clear iptable rules for tun mode"
       tun -d;;
     *) log error "network_mode: ${network_mode} not found"; exit 1;;
   esac
-  log info "iptables rules cleared"
-
-  # clear ipv6 rules
-  if [ "${ipv6}" = "true" ]; then
-    ip6tables -w 64 -D OUTPUT -p udp --destination-port 53 -j DROP 2>/dev/null
-  fi
-
   exit 0
 fi
 
 # add iptables rules
 case "$1" in
   redirect)
-    log info "set iptable rules for redirect mode"
     tproxy -d 2>/dev/null
     tun -d 2>/dev/null
     redirect
     ;;
   tproxy)
-    log info "set iptable rules for tproxy mode"
     redirect -d 2>/dev/null
     tun -d 2>/dev/null
     tproxy
     ;;
   tun)
-    log info "set iptable rules for tun mode"
     redirect -d 2>/dev/null
     tproxy -d 2>/dev/null
     tun

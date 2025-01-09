@@ -2,24 +2,6 @@
 
 source "${0%/*}/settings.sh"
 
-# Check whether busybox is installed or not on the system using command -v
-if ! command -v busybox &> /dev/null; then
-  log error "$(which busybox) command not found."
-  exit 1
-fi
-
-# check sing-box command
-if [ ! -f "$bin_path" ]; then
-  log ERROR "Cannot find ${bin_path}"
-  exit 1
-fi
-
-# check network_mode
-if [ -z "${network_mode}" ]; then
-  log ERROR "network_mode is not set"
-  exit 1
-fi
-
 # create tun
 if [ -n "${tun_device}" ] && [[ "${network_mode}" == @(mixed|tun) ]]; then
   log debug "use tun device: ${tun_device}"
@@ -35,105 +17,17 @@ if [ -n "${tun_device}" ] && [[ "${network_mode}" == @(mixed|tun) ]]; then
   fi
 fi
 
-# clear logs
-echo -n "" > "${run_log}"
-echo -n "" > "${box_log}"
-
-box_is_alive() {
-  local PID=$(<"${box_pid}" 2>/dev/null)
-  if ! kill -0 "$PID" 2>/dev/null; then
-    echo "$(<"${run_log}")"
-    log error "${bin_name} service is not running."
-    log error "please check ${run_log} and ${box_log} for more information."
-    log error "killing stale pid $PID"
-    killall -15 "sing-box" >/dev/null 2>&1 || busybox pkill -15 "sing-box" >/dev/null 2>&1
-    [ -f "${box_pid}" ] && rm -f "${box_pid}"
-    exit 1
-  else
-    return 0
-  fi
-}
-
-# Function to display the usage of a binary
-# This script retrieves information about a running binary process and logs it to a log file.
-box_status() {
-  # Get the process ID of the binary
-  local PID=$(busybox pidof ${bin_name})
-
-  if [ -z "$PID" ]; then
-    log Error "${bin_name} is not running."
-    return 1
-  else
-    log info "${bin_name} is running."
-  fi
-
-  # Get the memory usage of the binary
-  rss=$(grep VmRSS /proc/$PID/status | busybox awk '{ print $2 }')
-  [ "${rss}" -ge 1024 ] && bin_rss="$(expr ${rss} / 1024) MB" || bin_rss="${rss} KB"
-  swap=$(grep VmSwap /proc/$PID/status | busybox awk '{ print $2 }')
-  [ "${swap}" -ge 1024 ] && bin_swap="$(expr ${swap} / 1024) MB" || bin_swap="${swap} KB"
-
-  # Get the state of the binary
-  state=$(grep State /proc/$PID/status | busybox awk '{ print $2" "$3 }')
-
-  # Get the user and group of the binary
-  user_group=$(stat -c %U:%G /proc/$PID)
-
-  # Log the information
-  log info "${bin_name} has started with the '${user_group}' user group."
-  log info "${bin_name} status: ${state} (PID: $PID)"
-  log info "${bin_name} memory usage: ${bin_rss}, swap: ${bin_swap}"
-
-  # Get the CPU usage of the binary
-  cpu=$(ps -p $PID -o %cpu | busybox awk 'NR==2{print $1}' 2> /dev/null)
-
-  cpus_allowed=$(grep Cpus_allowed_list /proc/$PID/status | busybox awk '{ print $2" "$3 }')
-  cpuset=$(ps -p $PID -o cpu | busybox awk 'NR==2{print $1}' 2> /dev/null)
-
-  if [ -n "${cpu}" ]; then
-    log info "${bin_name} CPU usage: ${cpu}%"
-  else
-    log info "${bin_name} CPU usage: not available"
-  fi
-  if [ -n "${cpuset}" ]; then
-    log info "${bin_name} list of allowed CPUs : ${cpus_allowed}"
-    log info "${bin_name} Which CPU running on : ${cpuset}"
-  else
-    log info "${bin_name} Which CPU running on : not available"
-  fi
-
-  # Check battery temperature
-  temperature_celsius=$(($(cat /sys/class/power_supply/battery/temp) / 10))
-  log info "battery temperature: ${temperature_celsius}°C"
-
-  # Get the running time of the binary
-  running_time=$(busybox ps -o comm,etime | grep ${bin_name} | busybox awk '{print $2}')
-  if [ -n "${running_time}" ]; then
-    log info "${bin_name} running time: ${running_time}"
-  else
-    log info "${bin_name} running time: not available."
-  fi
-
-  # Save the process ID to the pid file
-  if [ -n "$PID" ]; then
-    log INFO "$bin_name service is running!!!"
-    echo -n "$PID" > "${box_pid}"
-  fi
-}
-
-system_info() {
-    box_version=$(busybox awk '!/^ *#/ && /version=/ { print $0 }' "$PROPFILE" 2>/dev/null)
-    timezone=$(getprop persist.sys.timezone)
-    sim_operator=$(getprop gsm.sim.operator.alpha)
-    sim_type=$(getprop gsm.network.type)
-    date=$(date)
-    cpu_abi=$(getprop ro.product.cpu.abi)
-
-    log info "${timezone}"
-    log info "${sim_operator} / ${sim_type}"
-    log info "${date}"
-    log info "${box_version}"
-    log info "${cpu_abi}"
+check_process_running() {
+  local retries=0
+  local max_retries=10
+  local sleep_interval=0.5
+  while [ $retries -le $max_retries ]; do
+    sleep $sleep_interval
+    PID=$(busybox pidof "$1")
+    [ -n "$PID" ] && return 0
+    retries=$((retries + 1))
+  done
+  return 1
 }
 
 renew_iptables() {
@@ -157,10 +51,11 @@ renew_iptables() {
 }
 
 start_box() {
-  # Clear the log file and add the timestamp and delimiter
-  # cd /data/adb/box/bin; chmod 755 *
   log INFO "Module is working! but no service is running"
-  system_info
+
+  # Clear the log file
+  echo -n "" > "${run_log}"
+  echo -n "" > "${box_log}"
 
   # set permission
   chown -R ${box_user_group} ${box_dir}
@@ -173,22 +68,19 @@ start_box() {
     exit 1
   fi
 
-  # run sing-box
-  log info "start ${bin_name} service."
-
   # sing-box config
   log debug "fake-ip-range: ${inet4_range}, ${inet6_range}"
   log debug "redir_port: ${redir_port}, tproxy_port: ${tproxy_port}"
   log debug "tun_device: ${tun_device}, stack: ${stack}"
   log debug "network_mode: ${network_mode}"
 
-  ulimit -SHn 1000000
   # Use ulimit to limit the memory usage of a process to 200MB
   # ulimit -v 200000  # Set the virtual memory limit in KB
+  ulimit -SHn 1000000
+
+  log info "start ${bin_name} service."
   if ${bin_path} check -D "${box_dir}/" -C "${box_dir}" > "${box_log}" 2>&1; then
     nohup busybox setuidgid "${box_user_group}" "${bin_path}" run -D "${box_dir}" -C "${box_dir}" >> "${box_log}" 2>&1 &
-    PID=$!
-    echo -n $PID > "${box_pid}"
     sleep 1
   else
     log error "$(<"${run_log}")"
@@ -196,19 +88,22 @@ start_box() {
     exit 1
   fi
 
-  count=0
-  while [ $count -le 10 ]; do
-    sleep 0.17
-    box_is_alive || break
-    count=$((count + 1))
-  done
-  box_status
+  # check if the binary is running
+  if check_process_running "${bin_name}"; then
+    PID="$(busybox pidof "${bin_name}")"
+    echo "$PID" > "${box_pid}"
+  else
+    log ERROR "${bin_name} is not running. Please check ${run_log} and ${box_log}."
+    killall -15 "${bin_name}" >/dev/null 2>&1 || busybox pkill -15 "${bin_name}" >/dev/null 2>&1
+    exit 1
+  fi
 
-  log info "set iptable rules"
+  log info "setup iptable rules"
   ${scripts_dir}/iptables.sh "${network_mode}"
+
+  log info "setup ipv6 forwarding"
   ipv6_setup
 
-  true
 }
 
 stop_box() {
@@ -225,14 +120,14 @@ stop_box() {
 
   # Check if the binary has stopped
   sleep 0.5
-  if ! busybox pidof "${bin_name}" >/dev/null 2>&1; then
-    # Delete the `box.pid` file if it exists
-    if [ -f "${box_pid}" ]; then
-      rm -f "${box_pid}"
-    fi
-  else
-    log warn "${bin_name} Not stopped; may still be shutting down or failed to shut down."
+  if busybox pidof "${bin_name}" >/dev/null 2>&1; then
+    log warn "${bin_name} Not stopped, may still be shutting down or failed to shut down."
     force_stop
+  fi
+
+  # clear the pid file
+  if ! busybox pidof "${bin_name}" &>/dev/null && [ -f "${box_pid}" ]; then
+    rm -f "${box_pid}"
   fi
 
   log INFO "$bin_name shutting down, service is stopped !!!"
@@ -257,44 +152,38 @@ force_stop() {
   sleep 0.5
   if ! busybox pidof "${bin_name}" >/dev/null 2>&1; then
     log warn "done, YOU can sleep peacefully."
-    rm -f "${box_pid}"
   fi
 }
 
 ipv6_setup() {
+  sysctl -w net.ipv4.ip_forward=1 &>/dev/null
   if [ "${ipv6}" == "true" ]; then
     log debug "ipv6: enabled"
-    {
-      sysctl -w net.ipv4.ip_forward=1
-      sysctl -w net.ipv6.conf.all.forwarding=1
-      sysctl -w net.ipv6.conf.all.accept_ra=2
-      sysctl -w net.ipv6.conf.wlan0.accept_ra=2
-      sysctl -w net.ipv6.conf.all.disable_ipv6=0
-      sysctl -w net.ipv6.conf.default.disable_ipv6=0
-      sysctl -w net.ipv6.conf.wlan0.disable_ipv6=0
-      # del: block Askes ipv6 completely
-      ip -6 rule del unreachable pref "${pref}" 2>/dev/null
-      # add: blocks all outgoing IPv6 traffic using the UDP protocol to port 53, effectively preventing DNS queries over IPv6.
-      if ! ip6tables -C OUTPUT -p udp --destination-port 53 -j DROP 2>/dev/null; then
-        ip6tables -w 64 -A OUTPUT -p udp --destination-port 53 -j DROP 2>/dev/null
-      fi
-    } &> /dev/null
+    sysctl -w net.ipv6.conf.all.forwarding=1 &>/dev/null
+    sysctl -w net.ipv6.conf.all.accept_ra=2 &>/dev/null
+    sysctl -w net.ipv6.conf.wlan0.accept_ra=2 &>/dev/null
+    sysctl -w net.ipv6.conf.all.disable_ipv6=0 &>/dev/null
+    sysctl -w net.ipv6.conf.default.disable_ipv6=0 &>/dev/null
+    sysctl -w net.ipv6.conf.wlan0.disable_ipv6=0 &>/dev/null
+    # del: block Askes ipv6 completely
+    ip -6 rule del unreachable pref "${pref}" &>/dev/null
+    # add: blocks all outgoing IPv6 traffic using the UDP protocol to port 53, effectively preventing DNS queries over IPv6.
+    if ! ip6tables -C OUTPUT -p udp --destination-port 53 -j DROP &>/dev/null; then
+      ip6tables -w 64 -A OUTPUT -p udp --destination-port 53 -j DROP &>/dev/null
+    fi
   else
-    {
-      sysctl -w net.ipv4.ip_forward=1
-      sysctl -w net.ipv6.conf.all.forwarding=0
-      sysctl -w net.ipv6.conf.all.accept_ra=0
-      sysctl -w net.ipv6.conf.wlan0.accept_ra=0
-      sysctl -w net.ipv6.conf.all.disable_ipv6=1
-      sysctl -w net.ipv6.conf.default.disable_ipv6=1
-      sysctl -w net.ipv6.conf.wlan0.disable_ipv6=1
-      # add: block Askes ipv6 completely
-      ip -6 rule add unreachable pref "${pref}" 2>/dev/null
-      # del: blocks all outgoing IPv6 traffic using the UDP protocol to port 53, effectively preventing DNS queries over IPv6.
-      if ip6tables -C OUTPUT -p udp --destination-port 53 -j DROP 2>/dev/null; then
-        ip6tables -w 64 -D OUTPUT -p udp --destination-port 53 -j DROP 2>/dev/null
-      fi
-    } &> /dev/null
+    sysctl -w net.ipv6.conf.all.forwarding=0 &>/dev/null
+    sysctl -w net.ipv6.conf.all.accept_ra=0 &>/dev/null
+    sysctl -w net.ipv6.conf.wlan0.accept_ra=0 &>/dev/null
+    sysctl -w net.ipv6.conf.all.disable_ipv6=1 &>/dev/null
+    sysctl -w net.ipv6.conf.default.disable_ipv6=1 &>/dev/null
+    sysctl -w net.ipv6.conf.wlan0.disable_ipv6=1 &>/dev/null
+    # add: block Askes ipv6 completely
+    ip -6 rule add unreachable pref "${pref}" &>/dev/null
+    # del: blocks all outgoing IPv6 traffic using the UDP protocol to port 53, effectively preventing DNS queries over IPv6.
+    if ip6tables -C OUTPUT -p udp --destination-port 53 -j DROP &>/dev/null; then
+      ip6tables -w 64 -D OUTPUT -p udp --destination-port 53 -j DROP &>/dev/null
+    fi
   fi
 }
 
@@ -306,23 +195,12 @@ case "$1" in
     stop_box
     ;;
   restart)
-    # stop
     stop_box
     sleep 0.5
-    # start
     start_box
-    ;;
-  status)
-    # Check whether the service is running or not
-    if busybox pidof "${bin_name}" >/dev/null; then
-      echo "${yellow}$("${bin_path}" version)${normal}"
-      box_bin_status
-    else
-      log warn "${bin_name} shutting down, service is stopped."
-    fi
     ;;
   *)
     echo "${red}$0 $1 no found${normal}"
-    echo "${yellow}usage${normal}: ${green}$0${normal} {${yellow}start|stop|restart|status${normal}}"
+    echo "${yellow}usage${normal}: ${green}$0${normal} {${yellow}start|stop|restart${normal}}"
     ;;
 esac

@@ -221,27 +221,11 @@ tun() {
   ${iptables} -I FORWARD -i "${tun_device}" -j ACCEPT
   ${iptables} -I FORWARD -o "${tun_device}" -j ACCEPT
 
-  sysctl -w net.ipv4.ip_forward=1
-  sysctl -w net.ipv4.conf.default.rp_filter=2
-  sysctl -w net.ipv4.conf.all.rp_filter=2
+  sysctl -w net.ipv4.conf.default.rp_filter=2 &>/dev/null
+  sysctl -w net.ipv4.conf.all.rp_filter=2 &>/dev/null
 
 }
 
-# clear iptables rules
-if [ "$1" == "clear" ]; then
-  case "${network_mode}" in
-    redirect)
-      redirect -d;;
-    tproxy)
-      tproxy -d;;
-    tun)
-      tun -d;;
-    *) log error "network_mode: ${network_mode} not found"; exit 1;;
-  esac
-  exit 0
-fi
-
-# add iptables rules
 case "$1" in
   redirect)
     tproxy -d 2>/dev/null
@@ -258,6 +242,16 @@ case "$1" in
     tproxy -d 2>/dev/null
     tun
     ;;
+  clear)
+    case "${network_mode}" in
+      redirect)
+        redirect -d;;
+      tproxy)
+        tproxy -d;;
+      tun)
+        tun -d;;
+      *) log error "network_mode: ${network_mode} not found"; exit 1;;
+    esac
   *)
     echo "${red}$0 $1 no found${normal}"
     echo "${yellow}usage${normal}: ${green}$0${normal} {${yellow}redirect|tproxy|tun|clear${normal}}"

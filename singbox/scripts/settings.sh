@@ -52,21 +52,6 @@ log() {
   esac
 }
 
-# Check whether busybox is installed or not on the system using command -v
-if ! command -v busybox &> /dev/null; then
-  log error "$(which busybox) command not found."
-  exit 1
-fi
-
-# ensure busybox version
-busybox_code=$(busybox | busybox grep -oE '[0-9.]*' | head -n 1)
-if [ "$(echo "${busybox_code}" | busybox awk -F. '{printf "%03d%03d%03d\n", $1, $2, $3}')" -lt "$(echo "1.36.1" | busybox awk -F. '{printf "%03d%03d%03d\n", $1, $2, $3}')" ]; then
-  log info "Current $(which busybox) v${busybox_code}"
-  log warn "Please update your busybox to v1.36.1+"
-else
-  log info "Current $(which busybox) v${busybox_code}"
-fi
-
 # iptables settings
 fwmark="16777216/16777216"
 table="2024"
@@ -153,15 +138,3 @@ fi
 
 # user custom config
 source ${box_dir}/settings.ini
-
-# check sing-box command
-if [ ! -f "$bin_path" ]; then
-  log ERROR "Cannot find ${bin_path}"
-  exit 1
-fi
-
-# check network_mode
-if [ -z "${network_mode}" ]; then
-  log ERROR "network_mode is not set"
-  exit 1
-fi

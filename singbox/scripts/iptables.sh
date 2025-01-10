@@ -38,6 +38,16 @@ redirect() {
   # 用户和组绕过配置
   ${iptables} -t nat -I BOX_LOCAL -m owner --uid-owner "${box_user}" --gid-owner "${box_group}" -j RETURN
 
+  # 应用绕过配置
+  packages="$(pm list packages -U)"
+  $jq -r '.inbounds[] | select(.type == "tun") | .exclude_package[] // empty' "$config_json" | while read -r package; do
+    [ -z "$package" ] && continue
+    uid="$(echo "${packages}" | grep -w "$package" | tr -dc '0-9')"
+    [ -z "$uid" ] && continue
+    log info "exclude package: $package, uid: $uid"
+    ${iptables} -t nat -A BOX_LOCAL -m owner --uid-owner ${uid} -j RETURN
+  done
+
   # 3. 处理内网流量（优先级高的绕过规则）
   for subnet in ${intranet[@]} ; do
     ${iptables} -t nat -A BOX_EXTERNAL -d ${subnet} -j RETURN
@@ -59,11 +69,11 @@ redirect() {
   # fi
 
   # 6. 特定应用处理（应用专用规则）
-  packages="$(pm list packages -U)"
   $jq -r '.inbounds[] | select(.type == "tun") | .include_package[] // empty' "$config_json" | while read -r package; do
     [ -z "$package" ] && continue
     uid="$(echo "${packages}" | grep -w "$package" | tr -dc '0-9')"
     [ -z "$uid" ] && continue
+    log info "include package: $package, uid: $uid"
     ${iptables} -t nat -A BOX_LOCAL -p tcp -m owner --uid-owner ${uid} -j REDIRECT --to-ports "${redir_port}"
     ${iptables} -t nat -A BOX_LOCAL -p udp -m owner --uid-owner ${uid} -j REDIRECT --to-ports "${redir_port}"
   done
@@ -86,6 +96,7 @@ redirect() {
 
   # 9. 通用流量处理（作为默认规则）
   ${iptables} -t nat -A BOX_LOCAL -p tcp -j REDIRECT --to-ports "${redir_port}"
+  ${iptables} -t nat -A BOX_LOCAL -p udp -j REDIRECT --to-ports "${redir_port}"
 
   # 10. 主链配置（最后进行）
   ${iptables} -t nat -I PREROUTING -j BOX_EXTERNAL
@@ -166,16 +177,26 @@ tproxy() {
   # 放行 sing-box 程序自身的流量，避免循环
   ${iptables} -t mangle -A BOX_LOCAL -m owner --uid-owner ${box_user} --gid-owner ${box_group} -j RETURN
 
+  # 应用绕过配置
+  packages="$(pm list packages -U)"
+  $jq -r '.inbounds[] | select(.type == "tun") | .exclude_package[] // empty' "$config_json" | while read -r package; do
+    [ -z "$package" ] && continue
+    uid="$(echo "${packages}" | grep -w "$package" | tr -dc '0-9')"
+    [ -z "$uid" ] && continue
+    log info "exclude package: $package, uid: $uid"
+    ${iptables} -t nat -A BOX_LOCAL -m owner --uid-owner ${uid} -j RETURN
+  done
+
   # 处理本地 DNS 查询请求
   ${iptables} -t mangle -A BOX_LOCAL -p tcp --dport 53 -j MARK --set-xmark ${fwmark}
   ${iptables} -t mangle -A BOX_LOCAL -p udp --dport 53 -j MARK --set-xmark ${fwmark}
 
   # 特殊应用处理
-  packages="$(pm list packages -U)"
   $jq -r '.inbounds[] | select(.type == "tun") | .include_package[] // empty' "$config_json" | while read -r package; do
     [ -z "$package" ] && continue
     uid="$(echo "${packages}" | grep -w "$package" | tr -dc '0-9')"
     [ -z "$uid" ] && continue
+    log info "include package: $package, uid: $uid"
     ${iptables} -t mangle -A BOX_LOCAL -p tcp -m owner --uid-owner ${uid} -j MARK --set-xmark ${fwmark}
     ${iptables} -t mangle -A BOX_LOCAL -p udp -m owner --uid-owner ${uid} -j MARK --set-xmark ${fwmark}
   done

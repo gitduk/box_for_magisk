@@ -3,8 +3,8 @@
 source "${0%/*}/settings.sh"
 
 # create tun
-if [ -n "${tun_device}" ] && [[ "${network_mode}" == @(mixed|tun) ]]; then
-  log debug "use tun device: ${tun_device}"
+if [ -n "${tun_device}" ]; then
+  log debug "create tun device: ${tun_device}"
   mkdir -p /dev/net
   [ ! -L /dev/net/tun ] && ln -s /dev/tun /dev/net/tun
   if [ ! -c "/dev/net/tun" ]; then
@@ -12,7 +12,7 @@ if [ -n "${tun_device}" ] && [[ "${network_mode}" == @(mixed|tun) ]]; then
     log warn "Your system does not support the TUN/TAP driver."
     log warn "Your system kernel version is not compatible with the TUN/TAP driver."
     log info "change network_mode to tproxy"
-    sed -i 's/network_mode=.*/network_mode="redirect"/g' "${settings}"
+    sed -i 's/network_mode=.*/network_mode="tproxy"/g' "${settings}"
     exit 1
   fi
 fi
@@ -51,8 +51,6 @@ renew_iptables() {
 }
 
 start_box() {
-  log INFO "Module is working! but no service is running"
-
   # Clear the log file
   echo -n "" > "${run_log}"
   echo -n "" > "${box_log}"
@@ -92,6 +90,7 @@ start_box() {
   if check_process_running "${bin_name}"; then
     PID="$(busybox pidof "${bin_name}")"
     echo "$PID" > "${box_pid}"
+    log INFO "${bin_name} is running"
   else
     log ERROR "${bin_name} is not running. Please check ${run_log} and ${box_log}."
     killall -15 "${bin_name}" >/dev/null 2>&1 || busybox pkill -15 "${bin_name}" >/dev/null 2>&1

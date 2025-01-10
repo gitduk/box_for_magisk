@@ -252,6 +252,7 @@ case "$1" in
         tun -d;;
       *) log error "network_mode: ${network_mode} not found"; exit 1;;
     esac
+    ;;
   *)
     echo "${red}$0 $1 no found${normal}"
     echo "${yellow}usage${normal}: ${green}$0${normal} {${yellow}redirect|tproxy|tun|clear${normal}}"

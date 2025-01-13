@@ -5,7 +5,7 @@ source "${0%/*}/settings.sh"
 # 统一的清理函数
 cleanup_rules() {
   local table="$1"
-  local chains=("BOX_EXTERNAL" "BOX_LOCAL" "LOCAL_IP_V4")
+  local chains="BOX_EXTERNAL BOX_LOCAL LOCAL_IP_V4"
   local iptables="iptables -w 64"
 
   log info "Cleaning up rules for table: ${table}"
@@ -70,7 +70,7 @@ redirect() {
     return 0
   fi
 
-  log info "Setting up REDIRECT mode"
+  log info "Setting up redirect mode"
 
   # 创建自定义链
   for chain in BOX_EXTERNAL BOX_LOCAL LOCAL_IP_V4; do
@@ -128,7 +128,7 @@ tproxy() {
     return 0
   fi
 
-  log info "Setting up TPROXY mode"
+  log info "Setting up tproxy mode"
 
   # 配置策略路由
   ip rule add fwmark "${fwmark}" table "${table}" pref "${pref}"
@@ -185,7 +185,7 @@ tun() {
   fi
 
   if [[ "$1" == "-d" ]]; then
-    log info "Cleaning up TUN mode rules"
+    log info "Cleaning up tun mode rules"
     ${iptables} -D FORWARD -i "${tun_device}" -j ACCEPT
     ${iptables} -D FORWARD -o "${tun_device}" -j ACCEPT
     return 0
@@ -197,7 +197,7 @@ tun() {
     exit 1
   fi
 
-  log info "Setting up TUN mode"
+  log info "Setting up tun mode"
   ${iptables} -I FORWARD -i "${tun_device}" -j ACCEPT
   ${iptables} -I FORWARD -o "${tun_device}" -j ACCEPT
 
@@ -208,37 +208,13 @@ tun() {
 
 # 主程序入口
 case "$1" in
-  redirect)
-    tproxy -d 2>/dev/null
-    tun -d 2>/dev/null
-    redirect
-    ;;
-  tproxy)
-    redirect -d 2>/dev/null
-    tun -d 2>/dev/null
-    tproxy
-    ;;
-  tun)
-    redirect -d 2>/dev/null
-    tproxy -d 2>/dev/null
-    tun
-    ;;
+  redirect) redirect ;;
+  tproxy) tproxy ;;
+  tun) tun ;;
   clear)
-    case "${network_mode}" in
-      redirect)
-        redirect -d
-        ;;
-      tproxy)
-        tproxy -d
-        ;;
-      tun)
-        tun -d
-        ;;
-      *)
-        log ERROR "Unknown network mode: ${network_mode}"
-        exit 1
-        ;;
-    esac
+    redirect -d
+    tproxy -d
+    tun -d
     ;;
   *)
     echo "Usage: $0 {redirect|tproxy|tun|clear}"

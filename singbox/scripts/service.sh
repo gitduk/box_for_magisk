@@ -161,7 +161,6 @@ start_box() {
   if check_process_running "${bin_name}"; then
     PID=$(busybox pidof "${bin_name}")
     echo "$PID" > "${box_pid}"
-    log INFO "${bin_name} started successfully"
   else
     log ERROR "$(<"${box_log}")"
     killall -15 "${bin_name}" >/dev/null 2>&1 || busybox pkill -15 "${bin_name}" >/dev/null 2>&1
@@ -175,7 +174,9 @@ start_box() {
   # 配置 IPv6
   log info "Configuring IPv6 settings"
   setup_ipv6
-
+  
+  log INFO "${bin_name} started successfully"
+    
   return 0
 }
 
@@ -205,13 +206,13 @@ stop_box() {
   if ! busybox pidof "${bin_name}" &>/dev/null && [ -f "${box_pid}" ]; then
     rm -f "${box_pid}"
   fi
-
-  log INFO "${bin_name} stopped successfully"
-
+  
   # 清理 iptables 规则
   log info "Clearing iptables rules"
   ${scripts_dir}/iptables.sh "clear"
-
+  
+  log INFO "${bin_name} stopped successfully"
+  
   return 0
 }
 

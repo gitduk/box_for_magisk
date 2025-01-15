@@ -19,7 +19,6 @@ elif [ "$KSU" = "true" ] && [ "$KSU_VER_CODE" -lt 10670 ]; then
   abort "-----------------------------------------------------------"
 fi
 
-
 if [ "$KSU" = "true" ]; then
   ui_print "- kernelSU version: $KSU_VER ($KSU_VER_CODE)"
   [ "$KSU_VER_CODE" -lt 10683 ] && service_dir="/data/adb/ksu/service.d"
@@ -32,7 +31,6 @@ fi
 
 mkdir -p "${service_dir}"
 
-# install module to /data/adb/modules/singbox
 if [ -d "${module_dir}" ]; then
   rm -rf "${module_dir}"
   ui_print "- Old module deleted."
@@ -54,7 +52,6 @@ fi
 mv "$MODPATH/singbox" /data/adb/
 
 # install singbox_service.sh
-ui_print "- Move service.sh to service dir"
 mv -f "$MODPATH/service.sh" "${service_dir}/singbox_service.sh"
 
 # set permissions
@@ -71,17 +68,12 @@ chmod ugo+x ${service_dir}/singbox_service.sh
 chmod ugo+x ${singbox_dir}/scripts/*
 chmod ugo+x $MODPATH/uninstall.sh
 
-# install action.sh
-if [ -e "$MODPATH/action.sh" ]; then
-  set_perm $MODPATH/action.sh  0  0  0755
-  chmod ugo+x $MODPATH/action.sh
-  mv -f $MODPATH/action.sh ${module_dir}
-fi
-
 if [ "$KSU" = "true" ]; then
   sed -i "s/name=.*/name=SingBox for KernelSU/g" $MODPATH/module.prop
+  unzip -o "$ZIPFILE" -d "$MODPATH" >&2
 elif [ "$APATCH" = "true" ]; then
   sed -i "s/name=.*/name=SingBox for APatch/g" $MODPATH/module.prop
+  unzip -o "$ZIPFILE" -d "$MODPATH" >&2
 else
   sed -i "s/name=.*/name=SingBox for Magisk/g" $MODPATH/module.prop
 fi

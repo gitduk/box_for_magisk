@@ -68,15 +68,20 @@ set_perm $MODPATH/uninstall.sh  0  0  0755
 
 # fix "set_perm_recursive /data/adb/box/scripts" not working on some phones.
 chmod ugo+x ${service_dir}/singbox_service.sh
-chmod ugo+x $MODPATH/uninstall.sh
 chmod ugo+x ${singbox_dir}/scripts/*
+chmod ugo+x $MODPATH/uninstall.sh
+
+# install action.sh
+if [ -e "$MODPATH/action.sh" ]; then
+  set_perm $MODPATH/action.sh  0  0  0755
+  chmod ugo+x $MODPATH/action.sh
+  mv -f $MODPATH/action.sh ${module_dir}
+fi
 
 if [ "$KSU" = "true" ]; then
   sed -i "s/name=.*/name=SingBox for KernelSU/g" $MODPATH/module.prop
-  unzip -o "$ZIPFILE" -d "$MODPATH" >&2
 elif [ "$APATCH" = "true" ]; then
   sed -i "s/name=.*/name=SingBox for APatch/g" $MODPATH/module.prop
-  unzip -o "$ZIPFILE" -d "$MODPATH" >&2
 else
   sed -i "s/name=.*/name=SingBox for Magisk/g" $MODPATH/module.prop
 fi

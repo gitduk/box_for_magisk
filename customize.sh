@@ -7,7 +7,7 @@ POSTFSDATA=false
 LATESTARTSERVICE=true
 
 service_dir="/data/adb/service.d"
-module_dir="/data/adb/modules/singbox"
+module_dir="/data/adb/modules/box_for_magisk"
 singbox_dir="/data/adb/singbox"
 
 if [ "$BOOTMODE" != "true" ]; then
@@ -85,4 +85,3 @@ ui_print "- Installation is complete"
 if [ ! -e "${singbox_dir}/config.json" ]; then
   ui_print "- Please put config.json to ${singbox_dir}"
 fi
-

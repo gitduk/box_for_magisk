@@ -15,7 +15,6 @@ box_dir="/data/adb/singbox"
 bin_path="${box_dir}/bin/${bin_name}"
 run_log="${box_dir}/logs/run.log"
 box_log="${box_dir}/logs/box.log"
-box_pid="${box_dir}/.box.pid"
 scripts_dir="${box_dir}/scripts"
 
 mod_root="/data/adb/modules"

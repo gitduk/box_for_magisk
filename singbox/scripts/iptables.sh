@@ -8,7 +8,7 @@ cleanup_rules() {
   local chains="BOX_EXTERNAL BOX_LOCAL LOCAL_IP_V4"
   local iptables="iptables -w 64"
 
-  log info "Cleaning up rules for table: ${table}"
+  log info "Cleaning iptable rules for ${table}"
 
   # 从主链中移除引用
   ${iptables} -t ${table} -D PREROUTING -j BOX_EXTERNAL 2>/dev/null
@@ -70,7 +70,7 @@ redirect() {
     return 0
   fi
 
-  log info "Setting up redirect mode"
+  log info "Setting up iptables for redirect mode"
 
   # 创建自定义链
   for chain in BOX_EXTERNAL BOX_LOCAL LOCAL_IP_V4; do
@@ -128,7 +128,7 @@ tproxy() {
     return 0
   fi
 
-  log info "Setting up tproxy mode"
+  log info "Setting up iptables for tproxy mode"
 
   # 配置策略路由
   ip rule add fwmark "${fwmark}" table "${table}" pref "${pref}"
@@ -197,7 +197,7 @@ tun() {
     exit 1
   fi
 
-  log info "Setting up tun mode"
+  log info "Setting up iptables for tun mode"
   ${iptables} -I FORWARD -i "${tun_device}" -j ACCEPT
   ${iptables} -I FORWARD -o "${tun_device}" -j ACCEPT
 

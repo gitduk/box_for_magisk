@@ -68,7 +68,7 @@ renew_iptables() {
     local pid_name="${box_dir}/pid_name.txt"
     ps -p $PID -o comm= > "${pid_name}"
     sed -i '/^[[:space:]]*$/d' "${pid_name}"
-    log debug "$(<"${pid_name}")(PID: $PID) service is still running, restarting box"
+    log warn "$(<"${pid_name}")(PID: $PID) service is still running, restarting box"
     rm -f "${pid_name}"
     stop_box
     return 1
@@ -82,7 +82,7 @@ setup_ipv6() {
   sysctl -w net.ipv4.ip_forward=1 &>/dev/null
 
   if [ "${ipv6}" == "true" ]; then
-    log debug "IPv6: enabled"
+    log info "IPv6: enabled"
 
     # 启用IPv6设置
     sysctl -w net.ipv6.conf.all.forwarding=1 &>/dev/null
@@ -136,13 +136,13 @@ start_box() {
   fi
 
   # 记录配置信息
-  [ -n "${tun_device}" ] && log debug "tun device: ${tun_device}"
-  [ -n "${stack}" ] && log debug "stack: ${stack}"
-  [ -n "${tproxy_port}" ] && log debug "tproxy_port: ${tproxy_port}"
-  [ -n "${redir_port}" ] && log debug "redir_port: ${redir_port}"
-  [ -n "${network_mode}" ] && log debug "network_mode: ${network_mode}"
-  [ -n "${inet4_range}" ] && log debug "inet4_range: ${inet4_range}"
-  [ -n "${inet6_range}" ] && log debug "inet6_range: ${inet6_range}"
+  [ -n "${tun_device}" ] && log info "tun device: ${tun_device}"
+  [ -n "${stack}" ] && log info "stack: ${stack}"
+  [ -n "${tproxy_port}" ] && log info "tproxy_port: ${tproxy_port}"
+  [ -n "${redir_port}" ] && log info "redir_port: ${redir_port}"
+  [ -n "${network_mode}" ] && log info "network_mode: ${network_mode}"
+  [ -n "${inet4_range}" ] && log info "inet4_range: ${inet4_range}"
+  [ -n "${inet6_range}" ] && log info "inet6_range: ${inet6_range}"
 
   # 设置系统限制
   ulimit -SHn 1000000
@@ -160,7 +160,6 @@ start_box() {
   # 检查进程状态
   if check_process_running "${bin_name}"; then
     PID=$(busybox pidof "${bin_name}")
-    echo "$PID" > "${box_pid}"
   else
     log ERROR "$(<"${box_log}")"
     killall -15 "${bin_name}" >/dev/null 2>&1 || busybox pkill -15 "${bin_name}" >/dev/null 2>&1
@@ -168,15 +167,14 @@ start_box() {
   fi
 
   # 设置 iptables 规则
-  log info "Setting up iptables rules"
   ${scripts_dir}/iptables.sh "${network_mode}"
 
   # 配置 IPv6
-  log info "Configuring IPv6 settings"
+  log info "Configuring IPv6"
   setup_ipv6
-  
-  log INFO "${bin_name} started successfully"
-    
+
+  log INFO "${bin_name} started"
+
   return 0
 }
 
@@ -202,17 +200,11 @@ stop_box() {
     fi
   fi
 
-  # 清理 PID 文件
-  if ! busybox pidof "${bin_name}" &>/dev/null && [ -f "${box_pid}" ]; then
-    rm -f "${box_pid}"
-  fi
-  
   # 清理 iptables 规则
-  log info "Clearing iptables rules"
   ${scripts_dir}/iptables.sh "clear"
-  
-  log INFO "${bin_name} stopped successfully"
-  
+
+  log INFO "${bin_name} stopped"
+
   return 0
 }
 

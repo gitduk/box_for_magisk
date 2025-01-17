@@ -2,10 +2,27 @@
 
 source "${0%/*}/settings.sh"
 
+chains=(
+  BOX_EXTERNAL
+  BOX_LOCAL
+  BOX_IP_V4
+)
+
+cleanup_limit() {
+  local iptables="iptables -w 64"
+
+  # 红魔9Pro
+  ${iptables} -F zte_fw_data_align_out &>/dev/null
+  ${iptables} -F zte_fw_gms &>/dev/null
+  ${iptables} -R tetherctrl_FORWARD 1 -j ACCEPT &>/dev/null
+  ${iptables} -F zte_fw_net_limit &>/dev/null
+  ${iptables} -F bw_penalty_box &>/dev/null
+  ${iptables} -F st_penalty_reject &>/dev/null
+}
+
 # 统一的清理函数
 cleanup_rules() {
   local table="$1"
-  local chains="BOX_EXTERNAL BOX_LOCAL LOCAL_IP_V4"
   local iptables="iptables -w 64"
 
   log info "Cleaning iptable rules for ${table}"
@@ -73,7 +90,7 @@ redirect() {
   log info "Setting up iptables for redirect mode"
 
   # 创建自定义链
-  for chain in BOX_EXTERNAL BOX_LOCAL LOCAL_IP_V4; do
+  for chain in "${chains[@]}"; do
     ${iptables} -t nat -N ${chain} 2>/dev/null
     ${iptables} -t nat -F ${chain}
   done
@@ -103,8 +120,8 @@ redirect() {
   ${iptables} -t nat -A BOX_EXTERNAL -p tcp -i tun+ -j REDIRECT --to-ports "${redir_port}"
 
   # 配置链引用和默认规则
-  ${iptables} -t nat -A BOX_EXTERNAL -j LOCAL_IP_V4
-  ${iptables} -t nat -A BOX_LOCAL -j LOCAL_IP_V4
+  ${iptables} -t nat -A BOX_EXTERNAL -j BOX_IP_V4
+  ${iptables} -t nat -A BOX_LOCAL -j BOX_IP_V4
   ${iptables} -t nat -A BOX_LOCAL -p tcp -j REDIRECT --to-ports "${redir_port}"
   ${iptables} -t nat -A BOX_LOCAL -p udp -j REDIRECT --to-ports "${redir_port}"
 
@@ -135,7 +152,7 @@ tproxy() {
   ip route add local default dev lo table "${table}"
 
   # 创建自定义链
-  for chain in BOX_EXTERNAL BOX_LOCAL LOCAL_IP_V4; do
+  for chain in "${chains[@]}"; do
     ${iptables} -t mangle -N ${chain} 2>/dev/null
     ${iptables} -t mangle -F ${chain}
   done
@@ -165,8 +182,8 @@ tproxy() {
   done
 
   # 配置链引用和默认规则
-  ${iptables} -t mangle -A BOX_EXTERNAL -j LOCAL_IP_V4
-  ${iptables} -t mangle -A BOX_LOCAL -j LOCAL_IP_V4
+  ${iptables} -t mangle -A BOX_EXTERNAL -j BOX_IP_V4
+  ${iptables} -t mangle -A BOX_LOCAL -j BOX_IP_V4
   ${iptables} -t mangle -A BOX_LOCAL -p tcp -j MARK --set-mark "${fwmark}"
   ${iptables} -t mangle -A BOX_LOCAL -p udp -j MARK --set-mark "${fwmark}"
 
@@ -205,6 +222,9 @@ tun() {
   sysctl -w net.ipv4.conf.default.rp_filter=2 &>/dev/null
   sysctl -w net.ipv4.conf.all.rp_filter=2 &>/dev/null
 }
+
+# 清理手机产商的网络限制
+cleanup_limit
 
 # 主程序入口
 case "$1" in

@@ -1,0 +1,178 @@
+Chain INPUT (policy ACCEPT)
+target     prot opt source               destination         
+zte_fw_net_limit  all  --  anywhere             anywhere            
+bw_INPUT   all  --  anywhere             anywhere            
+fw_INPUT   all  --  anywhere             anywhere            
+
+Chain FORWARD (policy ACCEPT)
+target     prot opt source               destination         
+oem_fwd    all  --  anywhere             anywhere            
+fw_FORWARD  all  --  anywhere             anywhere            
+bw_FORWARD  all  --  anywhere             anywhere            
+tetherctrl_FORWARD  all  --  anywhere             anywhere            
+
+Chain OUTPUT (policy ACCEPT)
+target     prot opt source               destination         
+zte_fw_o   all  --  anywhere             anywhere            
+zte_fw_gms  all  --  anywhere             anywhere            
+oem_out    all  --  anywhere             anywhere            
+fw_OUTPUT  all  --  anywhere             anywhere            
+st_OUTPUT  all  --  anywhere             anywhere            
+bw_OUTPUT  all  --  anywhere             anywhere            
+
+Chain bw_FORWARD (1 references)
+target     prot opt source               destination         
+bw_costly_rmnet_data3  all  --  anywhere             anywhere            
+bw_costly_rmnet_data3  all  --  anywhere             anywhere            
+bw_costly_rmnet_data1  all  --  anywhere             anywhere            
+bw_costly_rmnet_data1  all  --  anywhere             anywhere            
+
+Chain bw_INPUT (1 references)
+target     prot opt source               destination         
+bw_global_alert  all  --  anywhere             anywhere            
+bw_costly_rmnet_data1  all  --  anywhere             anywhere            
+bw_costly_rmnet_data3  all  --  anywhere             anywhere            
+RETURN     esp  --  anywhere             anywhere            
+RETURN     all  --  anywhere             anywhere             mark match 0x100000/0x100000
+MARK       all  --  anywhere             anywhere             MARK or 0x100000
+
+Chain bw_OUTPUT (1 references)
+target     prot opt source               destination         
+bw_global_alert  all  --  anywhere             anywhere            
+bw_costly_rmnet_data1  all  --  anywhere             anywhere            
+bw_costly_rmnet_data3  all  --  anywhere             anywhere            
+
+Chain bw_costly_rmnet_data1 (4 references)
+target     prot opt source               destination         
+bw_penalty_box  all  --  anywhere             anywhere            
+REJECT     all  --  anywhere             anywhere             ! quota rmnet_data1: 9223372036854775807 bytes  reject-with icmp-port-unreachable
+
+Chain bw_costly_rmnet_data3 (4 references)
+target     prot opt source               destination         
+bw_penalty_box  all  --  anywhere             anywhere            
+REJECT     all  --  anywhere             anywhere             ! quota rmnet_data3: 9223372036854775807 bytes  reject-with icmp-port-unreachable
+
+Chain bw_costly_shared (0 references)
+target     prot opt source               destination         
+bw_penalty_box  all  --  anywhere             anywhere            
+
+Chain bw_data_saver (1 references)
+target     prot opt source               destination         
+RETURN     all  --  anywhere             anywhere            
+
+Chain bw_global_alert (2 references)
+target     prot opt source               destination         
+           all  --  anywhere             anywhere             ! quota globalAlert: 2097152 bytes 
+
+Chain bw_happy_box (1 references)
+target     prot opt source               destination         
+RETURN     all  --  anywhere             anywhere            match bpf pinned /sys/fs/bpf/netd_shared/prog_netd_skfilter_allowlist_xtbpf
+bw_data_saver  all  --  anywhere             anywhere            
+
+Chain bw_penalty_box (3 references)
+target     prot opt source               destination         
+REJECT     all  --  anywhere             anywhere            match bpf pinned /sys/fs/bpf/netd_shared/prog_netd_skfilter_denylist_xtbpf reject-with icmp-port-unreachable
+bw_happy_box  all  --  anywhere             anywhere            
+
+Chain fw_FORWARD (1 references)
+target     prot opt source               destination         
+
+Chain fw_INPUT (1 references)
+target     prot opt source               destination         
+
+Chain fw_OUTPUT (1 references)
+target     prot opt source               destination         
+
+Chain oem_fwd (1 references)
+target     prot opt source               destination         
+
+Chain oem_out (1 references)
+target     prot opt source               destination         
+zte_fw_data_align_out  all  --  anywhere             anywhere            
+
+Chain st_OUTPUT (1 references)
+target     prot opt source               destination         
+
+Chain st_clear_caught (2 references)
+target     prot opt source               destination         
+
+Chain st_clear_detect (0 references)
+target     prot opt source               destination         
+REJECT     all  --  anywhere             anywhere             connmark match  0x2000000/0x2000000 reject-with icmp-port-unreachable
+RETURN     all  --  anywhere             anywhere             connmark match  0x1000000/0x1000000
+CONNMARK   tcp  --  anywhere             anywhere             u32 "0x0>>0x16&0x3c@0xc>>0x1a&0x3c@0x0&0xffff0000=0x16030000&&0x0>>0x16&0x3c@0xc>>0x1a&0x3c@0x4&0xff0000=0x10000" CONNMARK or 0x1000000
+CONNMARK   udp  --  anywhere             anywhere             u32 "0x0>>0x16&0x3c@0x8&0xffff0000=0x16fe0000&&0x0>>0x16&0x3c@0x14&0xff0000=0x10000" CONNMARK or 0x1000000
+RETURN     all  --  anywhere             anywhere             connmark match  0x1000000/0x1000000
+st_clear_caught  tcp  --  anywhere             anywhere             state ESTABLISHED u32 "0x0>>0x16&0x3c@0xc>>0x1a&0x3c@0x0&0x0=0x0"
+st_clear_caught  udp  --  anywhere             anywhere            
+
+Chain st_penalty_log (0 references)
+target     prot opt source               destination         
+CONNMARK   all  --  anywhere             anywhere             CONNMARK or 0x1000000
+NFLOG      all  --  anywhere             anywhere            
+
+Chain st_penalty_reject (0 references)
+target     prot opt source               destination         
+CONNMARK   all  --  anywhere             anywhere             CONNMARK or 0x2000000
+NFLOG      all  --  anywhere             anywhere            
+REJECT     all  --  anywhere             anywhere             reject-with icmp-port-unreachable
+
+Chain tetherctrl_FORWARD (1 references)
+target     prot opt source               destination         
+ACCEPT     all  --  anywhere             anywhere            
+
+Chain tetherctrl_counters (0 references)
+target     prot opt source               destination         
+
+Chain zte_fw_data_align_out (1 references)
+target     prot opt source               destination         
+REJECT     all  --  anywhere             anywhere             owner UID match u0_a433 reject-with icmp-port-unreachable
+REJECT     all  --  anywhere             anywhere             owner UID match u0_a514 reject-with icmp-port-unreachable
+REJECT     all  --  anywhere             anywhere             owner UID match u0_a258 reject-with icmp-port-unreachable
+REJECT     all  --  anywhere             anywhere             owner UID match u0_a453 reject-with icmp-port-unreachable
+REJECT     all  --  anywhere             anywhere             owner UID match u0_a501 reject-with icmp-port-unreachable
+REJECT     all  --  anywhere             anywhere             owner UID match u0_a326 reject-with icmp-port-unreachable
+REJECT     all  --  anywhere             anywhere             owner UID match u0_a518 reject-with icmp-port-unreachable
+REJECT     all  --  anywhere             anywhere             owner UID match u0_a457 reject-with icmp-port-unreachable
+
+Chain zte_fw_gms (1 references)
+target     prot opt source               destination         
+
+Chain zte_fw_m (17 references)
+target     prot opt source               destination         
+
+Chain zte_fw_net_limit (1 references)
+target     prot opt source               destination         
+
+Chain zte_fw_o (1 references)
+target     prot opt source               destination         
+zte_fw_w   all  --  anywhere             anywhere            
+zte_fw_w   all  --  anywhere             anywhere            
+zte_fw_w   all  --  anywhere             anywhere            
+zte_fw_w   all  --  anywhere             anywhere            
+zte_fw_w   all  --  anywhere             anywhere            
+zte_fw_w   all  --  anywhere             anywhere            
+zte_fw_m   all  --  anywhere             anywhere            
+zte_fw_m   all  --  anywhere             anywhere            
+zte_fw_m   all  --  anywhere             anywhere            
+zte_fw_m   all  --  anywhere             anywhere            
+zte_fw_m   all  --  anywhere             anywhere            
+zte_fw_m   all  --  anywhere             anywhere            
+zte_fw_m   all  --  anywhere             anywhere            
+zte_fw_m   all  --  anywhere             anywhere            
+zte_fw_m   all  --  anywhere             anywhere            
+zte_fw_m   all  --  anywhere             anywhere            
+zte_fw_m   all  --  anywhere             anywhere            
+zte_fw_m   all  --  anywhere             anywhere            
+zte_fw_m   all  --  anywhere             anywhere            
+zte_fw_m   all  --  anywhere             anywhere            
+zte_fw_m   all  --  anywhere             anywhere            
+zte_fw_m   all  --  anywhere             anywhere            
+zte_fw_m   all  --  anywhere             anywhere            
+
+Chain zte_fw_r (0 references)
+target     prot opt source               destination         
+REJECT     all  --  anywhere             anywhere             reject-with icmp-port-unreachable
+
+Chain zte_fw_w (6 references)
+target     prot opt source               destination         

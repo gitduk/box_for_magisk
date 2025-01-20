@@ -56,8 +56,10 @@ handle_packages() {
   local action="$3"
   local iptables="iptables -w 64"
   local packages="$(pm list packages -U)"
+  local custom_packages="$(cat ${box_dir}/${action}.list 2>/dev/null)"
+  local config_packages="$($jq -r ".inbounds[] | select(.type == \"tun\") | .${action}_package[] // empty" "$config_json" 2>/dev/null)"
 
-  $jq -r ".inbounds[] | select(.type == \"tun\") | .${action}_package[] // empty" "$config_json" | while read -r package; do
+  echo "${config_packages}\n${custom_packages}" | grep -Ev "^#" | while read -r package; do
     [ -z "$package" ] && continue
     uid="$(echo "${packages}" | grep -w "$package" | tr -dc '0-9')"
     [ -z "$uid" ] && continue
@@ -65,12 +67,22 @@ handle_packages() {
 
     case ${table} in
       nat)
-        ${iptables} -t nat -A ${chain} -p tcp -m owner --uid-owner ${uid} -j REDIRECT --to-ports "${redir_port}"
-        ${iptables} -t nat -A ${chain} -p udp -m owner --uid-owner ${uid} -j REDIRECT --to-ports "${redir_port}"
+        if [ "$action" = "exclude" ]; then
+          ${iptables} -t nat -A ${chain} -p tcp -m owner --uid-owner ${uid} -j RETURN
+          ${iptables} -t nat -A ${chain} -p udp -m owner --uid-owner ${uid} -j RETURN
+        else
+          ${iptables} -t nat -A ${chain} -p tcp -m owner --uid-owner ${uid} -j REDIRECT --to-ports "${redir_port}"
+          ${iptables} -t nat -A ${chain} -p udp -m owner --uid-owner ${uid} -j REDIRECT --to-ports "${redir_port}"
+        fi
         ;;
       mangle)
-        ${iptables} -t mangle -A ${chain} -p tcp -m owner --uid-owner ${uid} -j MARK --set-xmark ${fwmark}
-        ${iptables} -t mangle -A ${chain} -p udp -m owner --uid-owner ${uid} -j MARK --set-xmark ${fwmark}
+        if [ "$action" = "exclude" ]; then
+          ${iptables} -t mangle -A ${chain} -p tcp -m owner --uid-owner ${uid} -j RETURN
+          ${iptables} -t mangle -A ${chain} -p udp -m owner --uid-owner ${uid} -j RETURN
+        else
+          ${iptables} -t mangle -A ${chain} -p tcp -m owner --uid-owner ${uid} -j MARK --set-xmark ${fwmark}
+          ${iptables} -t mangle -A ${chain} -p udp -m owner --uid-owner ${uid} -j MARK --set-xmark ${fwmark}
+        fi
         ;;
     esac
   done
@@ -99,8 +111,8 @@ redirect() {
   ${iptables} -t nat -I BOX_LOCAL -m owner --uid-owner "${box_user}" --gid-owner "${box_group}" -j RETURN
 
   # 处理应用过滤
-  handle_packages nat BOX_LOCAL "exclude"
   handle_packages nat BOX_LOCAL "include"
+  handle_packages nat BOX_LOCAL "exclude"
 
   # 内网流量处理
   setup_intranet_rules nat BOX_EXTERNAL
@@ -170,8 +182,8 @@ tproxy() {
   ${iptables} -t mangle -A BOX_LOCAL -m owner --uid-owner ${box_user} --gid-owner ${box_group} -j RETURN
 
   # 应用过滤
-  handle_packages mangle BOX_LOCAL "exclude"
   handle_packages mangle BOX_LOCAL "include"
+  handle_packages mangle BOX_LOCAL "exclude"
 
   # 处理特殊接口
   for proto in tcp udp; do

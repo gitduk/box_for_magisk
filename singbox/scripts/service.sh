@@ -18,7 +18,7 @@ check_system_requirements() {
 
   # 检查并创建 TUN 设备
   if [ -n "${tun_device}" ]; then
-    log debug "Creating TUN device: ${tun_device}"
+    log info "Creating TUN device: ${tun_device}"
     mkdir -p /dev/net
     [ ! -L /dev/net/tun ] && ln -s /dev/tun /dev/net/tun
 

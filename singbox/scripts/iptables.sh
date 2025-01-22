@@ -8,6 +8,16 @@ chains=(
   BOX_IP_V4
 )
 
+init_chains() {
+  local table="$1"
+  local iptables="iptables -w 64"
+
+  for chain in "${chains[@]}"; do
+    ${iptables} -t ${table} -N ${chain} 2>/dev/null
+    ${iptables} -t ${table} -F ${chain}
+  done
+}
+
 cleanup_limit() {
   local iptables="iptables -w 64"
 
@@ -46,6 +56,24 @@ setup_intranet_rules() {
 
   for subnet in ${intranet[@]}; do
     ${iptables} -t ${table} -A ${chain} -d ${subnet} -j RETURN
+  done
+}
+
+# 处理 dns 流量
+setup_dns() {
+  local table="$1"
+  local chain="$2"
+  local iptables="iptables -w 64"
+
+  for proto in tcp udp; do
+    case ${table} in
+      nat)
+        ${iptables} -t ${table} -A ${chain} -p ${proto} --dport 53 -j REDIRECT --to-ports "${redir_port}"
+        ;;
+      mangle)
+        ${iptables} -t ${table} -A ${chain} -p ${proto} --dport 53 -j TPROXY --on-port ${tproxy_port} --tproxy-mark ${fwmark}
+        ;;
+    esac
   done
 }
 
@@ -101,13 +129,10 @@ redirect() {
 
   log info "Setting up iptables for redirect mode"
 
-  # 创建自定义链
-  for chain in "${chains[@]}"; do
-    ${iptables} -t nat -N ${chain} 2>/dev/null
-    ${iptables} -t nat -F ${chain}
-  done
+  # 初始化自定义链
+  init_chains nat
 
-  # 设置基础绕过规则
+  # 处理 sing-box 流量
   ${iptables} -t nat -I BOX_LOCAL -m owner --uid-owner "${box_user}" --gid-owner "${box_group}" -j RETURN
 
   # 处理应用过滤
@@ -119,10 +144,8 @@ redirect() {
   setup_intranet_rules nat BOX_LOCAL
 
   # DNS 处理
-  for proto in tcp udp; do
-    ${iptables} -t nat -A BOX_EXTERNAL -p ${proto} --dport 53 -j REDIRECT --to-ports "${redir_port}"
-    ${iptables} -t nat -A BOX_LOCAL -p ${proto} --dport 53 -j REDIRECT --to-ports "${redir_port}"
-  done
+  setup_dns nat BOX_EXTERNAL
+  setup_dns nat BOX_LOCAL
 
   # 处理特殊接口
   ${iptables} -t nat -A BOX_EXTERNAL -p tcp -i lo -j REDIRECT --to-ports "${redir_port}"
@@ -159,31 +182,26 @@ tproxy() {
 
   log info "Setting up iptables for tproxy mode"
 
+  # 初始化自定义链
+  init_chains mangle
+
   # 配置策略路由
   ip rule add fwmark "${fwmark}" table "${table}" pref "${pref}"
   ip route add local default dev lo table "${table}"
 
-  # 创建自定义链
-  for chain in "${chains[@]}"; do
-    ${iptables} -t mangle -N ${chain} 2>/dev/null
-    ${iptables} -t mangle -F ${chain}
-  done
-
-  # DNS 处理
-  for proto in tcp udp; do
-    ${iptables} -t mangle -A BOX_EXTERNAL -p ${proto} --dport 53 -j TPROXY --on-port ${tproxy_port} --tproxy-mark ${fwmark}
-  done
-
-  # 内网流量处理
-  setup_intranet_rules mangle BOX_EXTERNAL
-  setup_intranet_rules mangle BOX_LOCAL
-
-  # 处理本地流量
+  # 处理 sing-box 流量
   ${iptables} -t mangle -A BOX_LOCAL -m owner --uid-owner ${box_user} --gid-owner ${box_group} -j RETURN
 
   # 应用过滤
   handle_packages mangle BOX_LOCAL "include"
   handle_packages mangle BOX_LOCAL "exclude"
+
+  # 内网流量处理
+  setup_intranet_rules mangle BOX_EXTERNAL
+  setup_intranet_rules mangle BOX_LOCAL
+
+  # DNS 处理
+  setup_dns mangle BOX_EXTERNAL
 
   # 处理特殊接口
   for proto in tcp udp; do
@@ -236,7 +254,7 @@ tun() {
 }
 
 # 清理手机产商的网络限制
-cleanup_limit
+(sleep 10 && cleanup_limit) &
 
 # 主程序入口
 case "$1" in

@@ -499,7 +499,9 @@
         "rules": [
           {
             "domain_suffix": [
-              "googleapis.cn"
+              "googleapis.cn",
+              "cloudfront.net",
+              "wukaige.com"
             ]
           }
         ]

@@ -104,7 +104,6 @@
     "final": "dns_google",
     "strategy": "ipv4_only",
     "disable_expire": false,
-    "reverse_mapping": true,
     "independent_cache": true,
     "fakeip": {
       "enabled": true,

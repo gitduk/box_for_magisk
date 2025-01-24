@@ -1,0 +1,696 @@
+{
+  "log": {
+    "level": "warn",
+    "timestamp": true
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "store_fakeip": true,
+      "path": ".cache.db",
+      "cache_id": "cache_id"
+    },
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "external_ui": "ui",
+      "external_ui_download_url": "https://github.com/MetaCubeX/Yacd-meta/archive/gh-pages.zip",
+      "external_ui_download_detour": "🚀 节点选择",
+      "default_mode": "rule"
+    }
+  },
+  "ntp": {
+    "enabled": false,
+    "server": "ntp.tencent.com",
+    "server_port": 123,
+    "interval": "30m",
+    "detour": "DIRECT"
+  },
+  "dns": {
+    "servers": [
+      {
+        "tag": "dns_resolver",
+        "address": "223.5.5.5",
+        "detour": "DIRECT"
+      },
+      {
+        "tag": "dns_direct",
+        "address": "dns.alidns.com",
+        "address_resolver": "dns_resolver",
+        "address_strategy": "ipv4_only",
+        "detour": "DIRECT"
+      },
+      {
+        "tag": "dns_google",
+        "address": "dns.google",
+        "address_resolver": "dns_resolver",
+        "address_strategy": "ipv4_only",
+        "client_subnet": "1.0.1.0",
+        "detour": "🚀 节点选择"
+      },
+      {
+        "tag": "dns_cflare",
+        "address": "one.one.one.one",
+        "address_resolver": "dns_resolver",
+        "address_strategy": "ipv4_only",
+        "client_subnet": "1.0.1.0",
+        "detour": "🚀 节点选择"
+      },
+      {
+        "tag": "dns_fakeip",
+        "address": "fakeip"
+      },
+      {
+        "tag": "dns_block",
+        "address": "rcode://refused"
+      }
+    ],
+    "rules": [
+      {
+        "outbound": "any",
+        "server": "dns_resolver"
+      },
+      {
+        "clash_mode": "direct",
+        "server": "dns_direct"
+      },
+      {
+        "clash_mode": "global",
+        "server": "dns_cflare"
+      },
+      {
+        "rule_set": [
+          "inline-cn",
+          "inline-direct"
+        ],
+        "server": "dns_direct"
+      },
+      {
+        "rule_set": [
+          "geosite-anti-ad",
+          "geosite-adguard",
+          "geosite-category-ads-all"
+        ],
+        "server": "dns_block"
+      },
+      {
+        "rule_set": [
+          "geoip-cn",
+          "geosite-cn",
+          "geosite-geolocation-cn"
+        ],
+        "server": "dns_direct"
+      }
+    ],
+    "final": "dns_google",
+    "strategy": "ipv4_only",
+    "disable_expire": false,
+    "reverse_mapping": true,
+    "independent_cache": true,
+    "fakeip": {
+      "enabled": true,
+      "inet4_range": "198.18.0.0/15",
+      "inet6_range": "fc00::/18"
+    }
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "tun0",
+      "address": [
+        "172.18.0.1/30",
+        "fdfe:dcba:9876::1/126"
+      ],
+      "auto_route": true,
+      "auto_redirect": true,
+      "strict_route": false,
+      "route_address": [
+        "0.0.0.0/1",
+        "128.0.0.0/1",
+        "::/1",
+        "8000::/1"
+      ],
+      "route_exclude_address": [
+        "192.168.0.0/16",
+        "fc00::/7"
+      ],
+      "exclude_package": [
+        "com.tencent.mm",
+        "com.tencent.mp",
+        "com.tencent.mobileqq",
+        "com.tencent.qqmusic",
+        "com.tencent.wemeet.app",
+        "com.alicloud.databox",
+        "com.alibaba.aliyun",
+        "com.alibaba.android.rimet",
+        "com.taobao.taobao",
+        "com.taobao.idlefish",
+        "com.bilibili.app.in",
+        "com.eg.android.AlipayGphone",
+        "com.unionpay",
+        "com.sankuai.meituan",
+        "com.autonavi.minimap",
+        "com.baidu.BaiduMap",
+        "com.netease.cloudmusic",
+        "com.coolapk.market",
+        "com.jingdong.app.mall",
+        "nutstore.android"
+      ]
+    },
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "::",
+      "listen_port": 7890,
+      "set_system_proxy": false
+    },
+    {
+      "type": "tproxy",
+      "tag": "tproxy-in",
+      "listen": "::",
+      "listen_port": 7891
+    },
+    {
+      "type": "redirect",
+      "tag": "redirect-in",
+      "listen": "::",
+      "listen_port": 7897
+    },
+    {
+      "type": "socks",
+      "tag": "socks-in",
+      "listen": "::",
+      "listen_port": 7895
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "DIRECT"
+    },
+    {
+      "tag": "🚀 节点选择",
+      "type": "selector",
+      "outbounds": [
+        "🇭🇰 香港节点",
+        "🇨🇳 台湾节点",
+        "🇸🇬 狮城节点",
+        "🇺🇲 美国节点",
+        "🇯🇵 日本节点",
+        "🇰🇷 韩国节点",
+        "GLOBAL",
+        "DIRECT"
+      ]
+    },
+    {
+      "tag": "🅖  Google",
+      "type": "selector",
+      "outbounds": [
+        "🚀 节点选择",
+        "🇺🇲 美国节点",
+        "🇯🇵 日本节点",
+        "🇰🇷 韩国节点",
+        "GLOBAL"
+      ]
+    },
+    {
+      "tag": "💬 OpenAi",
+      "type": "selector",
+      "outbounds": [
+        "🇺🇲 美国节点",
+        "🇯🇵 日本节点",
+        "🇰🇷 韩国节点",
+        "🚀 节点选择",
+        "GLOBAL"
+      ]
+    },
+    {
+      "tag": "🇭🇰 香港节点",
+      "type": "urltest",
+      "outbounds": [
+        "{all}"
+      ],
+      "filter": [
+        {
+          "action": "include",
+          "keywords": [
+            "🇭🇰|HK|hk|香港|港|HongKong"
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "🇨🇳 台湾节点",
+      "type": "urltest",
+      "outbounds": [
+        "{all}"
+      ],
+      "filter": [
+        {
+          "action": "include",
+          "keywords": [
+            "🇹🇼|TW|tw|台湾|臺灣|台|Taiwan|TPE"
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "🇸🇬 狮城节点",
+      "type": "urltest",
+      "outbounds": [
+        "{all}"
+      ],
+      "filter": [
+        {
+          "action": "include",
+          "keywords": [
+            "🇸🇬|SG|sg|新加坡|狮|Singapore|SIN"
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "🇺🇲 美国节点",
+      "type": "urltest",
+      "outbounds": [
+        "{all}"
+      ],
+      "filter": [
+        {
+          "action": "include",
+          "keywords": [
+            "🇺🇸|US|us|美国|美|United States|SJC|LAX"
+          ]
+        },
+        {
+          "action": "exclude",
+          "keywords": [
+            "频道"
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "🇯🇵 日本节点",
+      "type": "urltest",
+      "outbounds": [
+        "{all}"
+      ],
+      "filter": [
+        {
+          "action": "include",
+          "keywords": [
+            "🇯🇵|JP|jp|日本|日|Japan|KIX|NRT"
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "🇰🇷 韩国节点",
+      "type": "urltest",
+      "outbounds": [
+        "{all}"
+      ],
+      "filter": [
+        {
+          "action": "include",
+          "keywords": [
+            "🇰🇷|韩国|KR|ICN"
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "🎯 全球直连",
+      "type": "selector",
+      "outbounds": [
+        "DIRECT",
+        "🚀 节点选择"
+      ]
+    },
+    {
+      "tag": "🌈 META",
+      "type": "selector",
+      "outbounds": [
+        "{all}"
+      ],
+      "filter": [
+        {
+          "action": "include",
+          "keywords": [
+            "解锁|失联|订阅|频道"
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "GLOBAL",
+      "type": "selector",
+      "outbounds": [
+        "{all}"
+      ],
+      "filter": [
+        {
+          "action": "exclude",
+          "keywords": [
+            "解锁|失联|订阅|频道"
+          ]
+        }
+      ]
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "action": "sniff",
+        "timeout": "1s"
+      },
+      {
+        "type": "logical",
+        "mode": "or",
+        "rules": [
+          {
+            "port": 53
+          },
+          {
+            "protocol": "dns"
+          }
+        ],
+        "action": "hijack-dns"
+      },
+      {
+        "clash_mode": "direct",
+        "outbound": "DIRECT"
+      },
+      {
+        "clash_mode": "global",
+        "outbound": "GLOBAL"
+      },
+      {
+        "rule_set": [
+          "inline-google"
+        ],
+        "outbound": "🅖  Google"
+      },
+      {
+        "rule_set": [
+          "inline-openai"
+        ],
+        "outbound": "💬 OpenAi"
+      },
+      {
+        "rule_set": [
+          "inline-proxy"
+        ],
+        "outbound": "🚀 节点选择"
+      },
+      {
+        "rule_set": [
+          "inline-cn"
+        ],
+        "outbound": "🎯 全球直连"
+      },
+      {
+        "rule_set": [
+          "inline-direct"
+        ],
+        "outbound": "DIRECT"
+      },
+      {
+        "rule_set": [
+          "inline-reject"
+        ],
+        "action": "reject"
+      },
+      {
+        "rule_set": [
+          "geosite-anti-ad",
+          "geosite-adguard",
+          "geosite-category-ads-all"
+        ],
+        "action": "reject"
+      },
+      {
+        "rule_set": [
+          "geoip-google",
+          "geosite-google"
+        ],
+        "outbound": "🅖  Google"
+      },
+      {
+        "rule_set": [
+          "geosite-openai"
+        ],
+        "outbound": "💬 OpenAi"
+      },
+      {
+        "rule_set": [
+          "geosite-geolocation-!cn"
+        ],
+        "outbound": "🚀 节点选择"
+      },
+      {
+        "rule_set": [
+          "geoip-cn",
+          "geosite-cn",
+          "geosite-geolocation-cn"
+        ],
+        "outbound": "🎯 全球直连"
+      }
+    ],
+    "rule_set": [
+      {
+        "tag": "inline-direct",
+        "type": "inline",
+        "rules": [
+          {
+            "ip_cidr": [
+              "0.0.0.0/8",
+              "10.0.0.0/8",
+              "100.64.0.0/10",
+              "127.0.0.0/8",
+              "172.16.0.0/12",
+              "192.168.0.0/16",
+              "198.18.0.0/16"
+            ]
+          },
+          {
+            "domain": [
+              "mtalk.google.com"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "inline-reject",
+        "type": "inline",
+        "rules": [
+          {
+            "ip_cidr": [
+              "224.0.0.0/3",
+              "ff00::/8"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "inline-cn",
+        "type": "inline",
+        "rules": [
+          {
+            "domain_suffix": [
+              "googleapis.cn"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "inline-proxy",
+        "type": "inline",
+        "rules": [
+          {
+            "domain_suffix": [
+              "okx.com"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "inline-google",
+        "type": "inline",
+        "rules": [
+          {
+            "domain_suffix": [
+              "google.com",
+              "google.dev",
+              "gstatic.com",
+              "googleapis.com"
+            ]
+          },
+          {
+            "package_name": [
+              "com.android.vending",
+              "com.google.uid.shared",
+              "com.google.android.gm",
+              "com.google.android.gms",
+              "com.google.android.gsf",
+              "com.google.android.youtube",
+              "com.google.android.webview",
+              "com.google.android.apps.youtube.music",
+              "com.google.android.apps.googlevoice",
+              "com.google.android.apps.authenticator2",
+              "com.google.android.googlequicksearchbox",
+              "com.google.android.inputmethod.latin"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "inline-openai",
+        "type": "inline",
+        "rules": [
+          {
+            "domain": [
+              "openai.com",
+              "chatgpt.com"
+            ]
+          },
+          {
+            "domain_suffix": [
+              "auth0.com",
+              "challenges.cloudflare.com",
+              "chatgpt.com",
+              "client-api.arkoselabs.com",
+              "events.statsigapi.net",
+              "featuregates.org",
+              "identrust.com",
+              "intercom.io",
+              "intercomcdn.com",
+              "oaistatic.com",
+              "oaiusercontent.com",
+              "openai.com",
+              "openaiapi-site.azureedge.net",
+              "sentry.io",
+              "stripe.com",
+              "claude.ai",
+              "anthropic.com",
+              "zed.dev"
+            ]
+          },
+          {
+            "package_name": [
+              "com.openai.chatgpt"
+            ]
+          }
+        ]
+      },
+      {
+        "tag": "geoip-cn",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.wukaige.com/geoip/cn.srs?token=changeme",
+        "download_detour": "DIRECT"
+      },
+      {
+        "tag": "geosite-cn",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.wukaige.com/geosite/cn.srs?token=changeme",
+        "download_detour": "DIRECT"
+      },
+      {
+        "tag": "geosite-openai",
+        "type": "remote",
+        "format": "source",
+        "url": "https://raw.wukaige.com/geosite/openai.json?token=changeme",
+        "download_detour": "DIRECT"
+      },
+      {
+        "tag": "geoip-google",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.wukaige.com/geoip/google.srs?token=changeme",
+        "download_detour": "DIRECT"
+      },
+      {
+        "tag": "geosite-google",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.wukaige.com/geosite/google.srs?token=changeme",
+        "download_detour": "DIRECT"
+      },
+      {
+        "tag": "geosite-youtube",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.wukaige.com/geosite/youtube.srs?token=changeme",
+        "download_detour": "DIRECT"
+      },
+      {
+        "tag": "geoip-telegram",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.wukaige.com/geoip/telegram.srs?token=changeme",
+        "download_detour": "DIRECT"
+      },
+      {
+        "tag": "geosite-telegram",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.wukaige.com/geosite/telegram.srs?token=changeme",
+        "download_detour": "DIRECT"
+      },
+      {
+        "tag": "geoip-twitter",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.wukaige.com/geoip/twitter.srs?token=changeme",
+        "download_detour": "DIRECT"
+      },
+      {
+        "tag": "geosite-twitter",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.wukaige.com/geosite/twitter.srs?token=changeme",
+        "download_detour": "DIRECT"
+      },
+      {
+        "tag": "geosite-anti-ad",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.wukaige.com/geosite/anti-ad-sing-box.srs?token=changeme",
+        "download_detour": "DIRECT"
+      },
+      {
+        "tag": "geosite-adguard",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.wukaige.com/geosite/geosite-adguard.srs?token=changeme",
+        "download_detour": "DIRECT"
+      },
+      {
+        "tag": "geosite-category-ads-all",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.wukaige.com/geosite/category-ads-all.srs?token=changeme",
+        "download_detour": "DIRECT"
+      },
+      {
+        "tag": "geosite-geolocation-cn",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.wukaige.com/geosite/geosite-geolocation-cn.srs?token=changeme",
+        "download_detour": "DIRECT"
+      },
+      {
+        "tag": "geosite-geolocation-!cn",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://raw.wukaige.com/geosite/geosite-geolocation-!cn.srs?token=changeme",
+        "download_detour": "DIRECT"
+      }
+    ],
+    "auto_detect_interface": true,
+    "final": "🚀 节点选择"
+  }
+}

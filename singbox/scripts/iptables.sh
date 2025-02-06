@@ -14,7 +14,7 @@ init_chains() {
 
   for chain in "${chains[@]}"; do
     ${iptables} -t ${table} -N ${chain} 2>/dev/null
-    ${iptables} -t ${table} -F ${chain}
+    ${iptables} -t ${table} -F ${chain} 2>/dev/null
   done
 }
 
@@ -22,12 +22,8 @@ cleanup_limit() {
   local iptables="iptables -w 64"
 
   # 红魔9Pro
-  ${iptables} -F zte_fw_data_align_out &>/dev/null
-  ${iptables} -F zte_fw_gms &>/dev/null
-  ${iptables} -R tetherctrl_FORWARD 1 -j ACCEPT &>/dev/null
-  ${iptables} -F zte_fw_net_limit &>/dev/null
-  ${iptables} -F bw_penalty_box &>/dev/null
-  ${iptables} -F st_penalty_reject &>/dev/null
+  ${iptables} -D oem_out -j zte_fw_data_align_out 2>/dev/null
+  ${iptables} -D OUTPUT -j zte_fw_gms 2>/dev/null
 }
 
 # 统一的清理函数
@@ -254,7 +250,7 @@ tun() {
 }
 
 # 清理手机产商的网络限制
-(sleep 10 && cleanup_limit) &
+(sleep 3 && cleanup_limit) &
 
 # 主程序入口
 case "$1" in

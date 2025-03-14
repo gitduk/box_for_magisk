@@ -100,6 +100,7 @@ setup_ipv6() {
       ip6tables -w 64 -A OUTPUT -p udp --destination-port 53 -j DROP &>/dev/null
     fi
   else
+    log info "IPv6: disabled"
     # 禁用IPv6设置
     sysctl -w net.ipv6.conf.all.forwarding=0 &>/dev/null
     sysctl -w net.ipv6.conf.all.accept_ra=0 &>/dev/null
@@ -135,7 +136,7 @@ start_box() {
     return 1
   fi
 
-  # 记录配置信息
+  # 打印配置信息
   [ -n "${tun_device}" ] && log info "tun device: ${tun_device}"
   [ -n "${stack}" ] && log info "stack: ${stack}"
   [ -n "${tproxy_port}" ] && log info "tproxy_port: ${tproxy_port}"
@@ -169,8 +170,7 @@ start_box() {
   # 设置 iptables 规则
   ${scripts_dir}/iptables.sh "${network_mode}"
 
-  # 配置 IPv6
-  log info "Configuring IPv6"
+  # IPv6 配置
   setup_ipv6
 
   log INFO "${bin_name} started"

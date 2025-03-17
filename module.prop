@@ -1,7 +1,6 @@
 id=box_for_magisk
 name=SingBox for Magisk
-version=v1.2.3
-versionCode=20250121
+version=v1.2.4
+versionCode=20250317
 author=gitduk
 description=use sing-box for tunnel proxy on android device
-updateJson=https://github.com/gitduk/box_for_magisk/raw/master/update.json

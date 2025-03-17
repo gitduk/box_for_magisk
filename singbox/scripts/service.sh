@@ -58,24 +58,6 @@ check_process_running() {
   return 1
 }
 
-# 重置 iptables 规则
-renew_iptables() {
-  if [ -z "$PID" ]; then
-    PID=$(busybox pidof "${bin_name}")
-  fi
-
-  if [ -n "$PID" ]; then
-    local pid_name="${box_dir}/pid_name.txt"
-    ps -p $PID -o comm= > "${pid_name}"
-    sed -i '/^[[:space:]]*$/d' "${pid_name}"
-    log warn "$(<"${pid_name}")(PID: $PID) service is still running, restarting box"
-    rm -f "${pid_name}"
-    stop_box
-    return 1
-  fi
-  return 0
-}
-
 # 设置IPv6环境
 setup_ipv6() {
   # 基础网络设置
@@ -168,7 +150,7 @@ start_box() {
   fi
 
   # 设置 iptables 规则
-  ${scripts_dir}/iptables.sh "${network_mode}"
+  # ${scripts_dir}/iptables.sh "${network_mode}"
 
   # IPv6 配置
   setup_ipv6
@@ -201,7 +183,7 @@ stop_box() {
   fi
 
   # 清理 iptables 规则
-  ${scripts_dir}/iptables.sh "clear"
+  # ${scripts_dir}/iptables.sh "clear"
 
   log INFO "${bin_name} stopped"
 
@@ -260,3 +242,4 @@ case "$1" in
     exit 1
     ;;
 esac
+

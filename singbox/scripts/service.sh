@@ -150,7 +150,7 @@ start_box() {
   fi
 
   # 设置 iptables 规则
-  # ${scripts_dir}/iptables.sh "${network_mode}"
+  ${scripts_dir}/iptables.sh "${network_mode}"
 
   # IPv6 配置
   setup_ipv6
@@ -183,7 +183,7 @@ stop_box() {
   fi
 
   # 清理 iptables 规则
-  # ${scripts_dir}/iptables.sh "clear"
+  ${scripts_dir}/iptables.sh "clear"
 
   log INFO "${bin_name} stopped"
 
@@ -242,4 +242,3 @@ case "$1" in
     exit 1
     ;;
 esac
-

@@ -2,6 +2,10 @@
 
 source "${0%/*}/settings.sh"
 
+# 创建必要的目录
+mkdir -p "${box_dir}/logs"
+chmod 755 "${box_dir}/logs"
+
 # 检查必要的系统条件
 check_system_requirements() {
   # 检查 sing-box 命令

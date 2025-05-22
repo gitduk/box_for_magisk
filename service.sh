@@ -4,7 +4,14 @@
 
 (
   until [ $(getprop init.svc.bootanim) = "stopped" ]; do
-    sleep 10
+    sleep 5
+  done
+
+  for i in $(seq 1 10); do
+    if ip route | grep -q default; then
+      break
+    fi
+    sleep 0.5
   done
 
   if [ -f "/data/adb/singbox/scripts/service.sh" ]; then

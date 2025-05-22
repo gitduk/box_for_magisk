@@ -45,7 +45,6 @@ if [ -d "${singbox_dir}" ]; then
   if [ -e "${singbox_dir}/config.json" ]; then
     ui_print "- Backup singbox config file."
     mv ${singbox_dir}/config.json $MODPATH/singbox
-    mv ${singbox_dir}/settings.ini $MODPATH/singbox
   fi
   rm -rf "${singbox_dir}"
 fi

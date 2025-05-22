@@ -20,16 +20,20 @@ check_system_requirements() {
     return 1
   fi
 
+  # 确保以 root 身份运行
+  if [ "$(id -u)" -ne 0 ]; then
+    log ERROR "Not running as root"
+    return 1
+  fi
+
   # 检查并创建 TUN 设备
   if [ -n "${tun_device}" ]; then
-    log info "Creating TUN device: ${tun_device}"
     mkdir -p /dev/net
     [ ! -L /dev/net/tun ] && ln -s /dev/tun /dev/net/tun
-
     if [ ! -c "/dev/net/tun" ]; then
       log error "Cannot create /dev/net/tun"
       log warn "System may not support TUN/TAP driver or kernel incompatibility"
-      log info "Falling back to TPROXY mode"
+      log info "Falling back to tproxy mode"
       sed -i 's/network_mode=.*/network_mode="tproxy"/g' "${settings}"
       return 1
     fi
@@ -138,13 +142,13 @@ start_box() {
   log info "Starting ${bin_name} service"
   if ${bin_path} check -D "${box_dir}/" -C "${box_dir}" > "${box_log}" 2>&1; then
     nohup busybox setuidgid "${box_user_group}" "${bin_path}" run -D "${box_dir}" -C "${box_dir}" >> "${box_log}" 2>&1 &
-    sleep 1
   else
     log ERROR "$(<"${box_log}")"
     return 1
   fi
 
   # 检查进程状态
+  sleep 3
   if check_process_running "${bin_name}"; then
     PID=$(busybox pidof "${bin_name}")
   else

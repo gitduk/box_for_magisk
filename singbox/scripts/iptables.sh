@@ -1,163 +1,281 @@
 #!/system/bin/sh
 
-# 设置错误处理
-set -e
-trap 'handle_error $? $LINENO' ERR
+# ============================================================
+# iptables 规则管理脚本
+# 支持 redirect、tproxy、tun 三种模式
+# ============================================================
 
-source "${0%/*}/settings.sh"
+# 加载依赖（先加载，确保函数可用）
+source "${0%/*}/constants.sh"
+source "${0%/*}/utils.sh"
+source "${0%/*}/config.sh"
 
-# 定义链
-chains="BOX_EXTERNAL BOX_LOCAL BOX_IP_V4 BOX_IP_V6"
-
-# 错误处理函数
+# -------------------- 错误处理函数 --------------------
 handle_error() {
   local exit_code=$1
   local line_number=$2
+
   # 只在非正常退出时记录错误
   if [ "$exit_code" -ne 0 ] && [ "$exit_code" -ne 2 ]; then
-    log ERROR "Error occurred at line $line_number with exit code $exit_code"
+    log error "Error occurred at line ${line_number} with exit code ${exit_code}"
   fi
+
   cleanup_all
-  exit $exit_code
+  exit "$exit_code"
 }
 
-# 安全检查函数
+# 设置错误处理（在函数定义之后）
+set -e
+trap 'handle_error $? $LINENO' ERR
+
+# -------------------- 安全检查函数 --------------------
 check_requirements() {
-  # 检查 root 权限
-  if [ "$(id -u)" != "0" ]; then
-    log ERROR "This script requires root privileges"
-    exit 1
-  fi
+  check_root || exit 1
 
   # 检查 iptables 命令
-  if ! command -v iptables >/dev/null 2>&1; then
-    log ERROR "iptables command not found"
+  if ! command_exists iptables; then
+    log error "iptables command not found"
     exit 1
   fi
 
   # 检查必要的变量
-  local required_vars="box_user box_group redir_port tproxy_port fwmark"
+  local required_vars="BOX_USER BOX_GROUP FWMARK"
   for var in $required_vars; do
     eval "value=\$$var"
     if [ -z "$value" ]; then
-      log ERROR "Required variable $var is not set"
+      log error "Required variable ${var} is not set"
       exit 1
     fi
   done
-}
 
-# 统一的清理函数
-cleanup_all() {
-  log INFO "Starting cleanup of all rules"
-  cleanup_rules nat
-  cleanup_rules mangle
-  cleanup_ipv6_rules
-  cleanup_limit
-  log INFO "Cleanup completed"
-}
-
-# 清理规则函数
-cleanup_rules() {
-  local table="$1"
-  local iptables=$(get_iptables_cmd "$table" "ipv4")
-
-  log INFO "Cleaning iptable rules for ${table}"
-
-  # 从主链中移除引用
-  $iptables -D PREROUTING -j BOX_EXTERNAL 2>/dev/null
-  $iptables -D OUTPUT -j BOX_LOCAL 2>/dev/null
-
-  # 清理自定义链
-  for chain in $chains; do
-    $iptables -t ${table} -F ${chain} 2>/dev/null
-    $iptables -t ${table} -X ${chain} 2>/dev/null
-  done
-
-  return 0
-}
-
-# 优化的 iptables 命令构建函数
-get_iptables_cmd() {
-  local table="$1"
-  local family="$2"
-  local timeout=64
-  case "$family" in
-    "ipv6") echo "ip6tables -w $timeout -t $table" ;;
-    *) echo "iptables -w $timeout -t $table" ;;
+  # 根据模式检查端口配置
+  case "$1" in
+    redirect)
+      if [ -z "$redir_port" ]; then
+        log error "Failed to start: redirect mode requires redir_port"
+        log error ""
+        log error "Your ${CONFIG_JSON} does not have a 'redirect' inbound configured."
+        log error "Please add a redirect inbound to your config.json, or change network_mode in ${SETTINGS_INI}"
+        log error ""
+        log error "Example redirect inbound configuration:"
+        log error '  {'
+        log error '    "type": "redirect",'
+        log error '    "tag": "redirect-in",'
+        log error '    "listen": "::",'
+        log error '    "listen_port": 7892'
+        log error '  }'
+        log error ""
+        log error "Or change network_mode to match your config:"
+        log error "  - If you have 'tun' inbound: network_mode=\"tun\""
+        log error "  - If you have 'tproxy' inbound: network_mode=\"tproxy\""
+        exit 1
+      fi
+      ;;
+    tproxy)
+      if [ -z "$tproxy_port" ]; then
+        log error "Failed to start: tproxy mode requires tproxy_port"
+        log error ""
+        log error "Your ${CONFIG_JSON} does not have a 'tproxy' inbound configured."
+        log error "Please add a tproxy inbound to your config.json, or change network_mode in ${SETTINGS_INI}"
+        log error ""
+        log error "Example tproxy inbound configuration:"
+        log error '  {'
+        log error '    "type": "tproxy",'
+        log error '    "tag": "tproxy-in",'
+        log error '    "listen": "::",'
+        log error '    "listen_port": 7891'
+        log error '  }'
+        log error ""
+        log error "Or change network_mode to match your config:"
+        log error "  - If you have 'tun' inbound: network_mode=\"tun\""
+        log error "  - If you have 'redirect' inbound: network_mode=\"redirect\""
+        exit 1
+      fi
+      ;;
   esac
 }
 
-# 优化的链初始化函数
+# -------------------- 获取 iptables 命令 --------------------
+get_iptables_cmd() {
+  local table="$1"
+  local family="$2"
+
+  case "$family" in
+    ipv6) echo "ip6tables -w ${IPTABLES_TIMEOUT} -t ${table}" ;;
+    *) echo "iptables -w ${IPTABLES_TIMEOUT} -t ${table}" ;;
+  esac
+}
+
+# -------------------- 清理策略路由 --------------------
+cleanup_policy_routing() {
+  log info "Cleaning policy routing rules"
+
+  # 清理 IPv4 路由规则
+  ip rule del fwmark "${FWMARK}" table "${ROUTE_TABLE}" pref "${ROUTE_PREF}" 2>/dev/null || true
+  ip route del local default dev lo table "${ROUTE_TABLE}" 2>/dev/null || true
+
+  # 清理 IPv6 路由规则
+  if [ "${ipv6}" = "true" ]; then
+    ip -6 rule del fwmark "${FWMARK}" table "${ROUTE_TABLE}" pref "${ROUTE_PREF}" 2>/dev/null || true
+    ip -6 route del local default dev lo table "${ROUTE_TABLE}" 2>/dev/null || true
+    ip -6 rule del unreachable pref "${ROUTE_PREF}" 2>/dev/null || true
+  fi
+
+  # 刷新路由表
+  ip route flush table "${ROUTE_TABLE}" 2>/dev/null || true
+  ip -6 route flush table "${ROUTE_TABLE}" 2>/dev/null || true
+}
+
+# -------------------- 清理 iptables 规则 --------------------
+cleanup_rules() {
+  local table="$1"
+  local family="${2:-ipv4}"
+  local iptables=$(get_iptables_cmd "$table" "$family")
+
+  log info "Cleaning ${family} iptables rules for ${table} table"
+
+  # 从主链中移除引用
+  for chain in $CHAINS; do
+    $iptables -D PREROUTING -j "$chain" 2>/dev/null || true
+    $iptables -D OUTPUT -j "$chain" 2>/dev/null || true
+    $iptables -D FORWARD -i "$chain" -j ACCEPT 2>/dev/null || true
+    $iptables -D FORWARD -o "$chain" -j ACCEPT 2>/dev/null || true
+  done
+
+  # 清理自定义链
+  for chain in $CHAINS; do
+    $iptables -F "$chain" 2>/dev/null || true
+    $iptables -X "$chain" 2>/dev/null || true
+  done
+
+  # 清理特定规则
+  if [ "$table" = "nat" ] && [ "$family" = "ipv4" ]; then
+    $iptables -D OUTPUT -d 127.0.0.1 -p tcp -m owner --uid-owner "${BOX_USER}" --gid-owner "${BOX_GROUP}" -j REJECT 2>/dev/null || true
+  fi
+
+  if [ "$table" = "mangle" ]; then
+    if [ "$family" = "ipv6" ]; then
+      local ip6tables=$(get_iptables_cmd "$table" "ipv6")
+      $ip6tables -D OUTPUT -p udp --destination-port 53 -j DROP 2>/dev/null || true
+    fi
+  fi
+
+  if [ "$table" = "filter" ]; then
+    [ -n "$tun_device" ] && {
+      $iptables -D FORWARD -i "${tun_device}" -j ACCEPT 2>/dev/null || true
+      $iptables -D FORWARD -o "${tun_device}" -j ACCEPT 2>/dev/null || true
+    }
+  fi
+}
+
+# -------------------- 清理限制脚本 --------------------
+cleanup_limit() {
+  # 调用外部脚本清理厂商限制
+  if [ -f "${0%/*}/rmlimit.sh" ]; then
+    sh "${0%/*}/rmlimit.sh" 2>/dev/null || true
+  fi
+}
+
+# -------------------- 统一的清理函数 --------------------
+cleanup_all() {
+  log info "Starting cleanup of all rules"
+
+  cleanup_rules nat ipv4
+  cleanup_rules mangle ipv4
+  cleanup_rules filter ipv4
+
+  if [ "${ipv6}" = "true" ]; then
+    cleanup_rules mangle ipv6
+    cleanup_rules filter ipv6
+  fi
+
+  cleanup_policy_routing
+  cleanup_limit
+
+  log info "Cleanup completed"
+}
+
+# -------------------- 初始化链 --------------------
 init_chains() {
   local table="$1"
   local family="$2"
   local iptables=$(get_iptables_cmd "$table" "$family")
 
   # 先清理现有链
-  for chain in $chains; do
-    # 从主链中移除引用
-    $iptables -D PREROUTING -j "$chain" 2>/dev/null
-    $iptables -D OUTPUT -j "$chain" 2>/dev/null
-    # 清理链中的规则
-    $iptables -F "$chain" 2>/dev/null
-    # 删除链
-    $iptables -X "$chain" 2>/dev/null
+  for chain in $CHAINS; do
+    $iptables -D PREROUTING -j "$chain" 2>/dev/null || true
+    $iptables -D OUTPUT -j "$chain" 2>/dev/null || true
+    $iptables -F "$chain" 2>/dev/null || true
+    $iptables -X "$chain" 2>/dev/null || true
   done
 
   # 创建新链
-  for chain in $chains; do
-    # 尝试创建新链
+  for chain in $CHAINS; do
     if ! $iptables -N "$chain" 2>/dev/null; then
-      # 如果链已存在，确保它是空的
-      $iptables -F "$chain" 2>/dev/null
+      $iptables -F "$chain" 2>/dev/null || true
     fi
   done
-
-  return 0
 }
 
-# 优化的包处理函数
+# -------------------- 处理应用包过滤 --------------------
 handle_packages() {
   local table="$1"
   local chain="$2"
   local action="$3"
   local family="$4"
   local iptables=$(get_iptables_cmd "$table" "$family")
-  local packages="$(pm list packages -U)"
-  local custom_packages="$(cat ${box_dir}/${action}.list 2>/dev/null)"
-  local config_packages="$($jq -r ".inbounds[] | select(.type == \"tun\") | .${action}_package[] // empty" "$config_json" 2>/dev/null)"
 
-  # 使用数组存储包名，提高效率
-  local package_list=$(echo -e "${config_packages}\n${custom_packages}" | grep -v '^#' | grep -v '^$')
+  # 获取包列表
+  local packages="$(pm list packages -U 2>/dev/null)"
+  local custom_packages=""
+  local config_packages=""
+
+  # 读取自定义列表
+  if [ "$action" = "exclude" ] && [ -f "${EXCLUDE_LIST}" ]; then
+    custom_packages="$(cat "${EXCLUDE_LIST}" 2>/dev/null | grep -v '^#' | grep -v '^$')"
+  elif [ "$action" = "include" ] && [ -f "${INCLUDE_LIST}" ]; then
+    custom_packages="$(cat "${INCLUDE_LIST}" 2>/dev/null | grep -v '^#' | grep -v '^$')"
+  fi
+
+  # 读取配置文件中的包列表
+  if [ -f "${JQ_PATH}" ] && [ -f "${CONFIG_JSON}" ]; then
+    config_packages="$(${JQ_PATH} -r ".inbounds[] | select(.type == \"tun\") | .${action}_package[] // empty" "${CONFIG_JSON}" 2>/dev/null | grep -v '^$' || true)"
+  fi
+
+  # 合并包列表
+  local package_list=$(echo -e "${config_packages}\n${custom_packages}" | grep -v '^$' | sort -u || true)
+
+  # 处理每个包
   for package in $package_list; do
-    local uid="$(echo "${packages}" | grep -w "$package" | tr -dc '0-9')"
+    local uid=$(get_app_uid "$package")
     [ -z "$uid" ] && continue
-    log INFO "${action} package: $package, uid: $uid"
 
-    case ${table} in
+    log info "${action} package: ${package}, uid: ${uid}"
+
+    case "${table}" in
       nat)
         if [ "$action" = "exclude" ]; then
-          $iptables -A ${chain} -p tcp -m owner --uid-owner ${uid} -j RETURN
-          $iptables -A ${chain} -p udp -m owner --uid-owner ${uid} -j RETURN
+          $iptables -A "${chain}" -p tcp -m owner --uid-owner "${uid}" -j RETURN 2>/dev/null || true
+          $iptables -A "${chain}" -p udp -m owner --uid-owner "${uid}" -j RETURN 2>/dev/null || true
         else
-          $iptables -A ${chain} -p tcp -m owner --uid-owner ${uid} -j REDIRECT --to-ports "${redir_port}"
-          $iptables -A ${chain} -p udp -m owner --uid-owner ${uid} -j REDIRECT --to-ports "${redir_port}"
+          $iptables -A "${chain}" -p tcp -m owner --uid-owner "${uid}" -j REDIRECT --to-ports "${redir_port}" 2>/dev/null || true
+          $iptables -A "${chain}" -p udp -m owner --uid-owner "${uid}" -j REDIRECT --to-ports "${redir_port}" 2>/dev/null || true
         fi
         ;;
       mangle)
         if [ "$action" = "exclude" ]; then
-          $iptables -A ${chain} -p tcp -m owner --uid-owner ${uid} -j RETURN
-          $iptables -A ${chain} -p udp -m owner --uid-owner ${uid} -j RETURN
+          $iptables -A "${chain}" -p tcp -m owner --uid-owner "${uid}" -j RETURN 2>/dev/null || true
+          $iptables -A "${chain}" -p udp -m owner --uid-owner "${uid}" -j RETURN 2>/dev/null || true
         else
-          $iptables -A ${chain} -p tcp -m owner --uid-owner ${uid} -j MARK --set-xmark ${fwmark}
-          $iptables -A ${chain} -p udp -m owner --uid-owner ${uid} -j MARK --set-xmark ${fwmark}
+          $iptables -A "${chain}" -p tcp -m owner --uid-owner "${uid}" -j MARK --set-xmark "${FWMARK}" 2>/dev/null || true
+          $iptables -A "${chain}" -p udp -m owner --uid-owner "${uid}" -j MARK --set-xmark "${FWMARK}" 2>/dev/null || true
         fi
         ;;
     esac
   done
 }
 
-# 优化的 DNS 处理函数
+# -------------------- DNS 处理 --------------------
 setup_dns() {
   local table="$1"
   local chain="$2"
@@ -165,45 +283,69 @@ setup_dns() {
   local iptables=$(get_iptables_cmd "$table" "$family")
 
   for proto in tcp udp; do
-    case ${table} in
+    case "${table}" in
       nat)
-        $iptables -A ${chain} -p ${proto} --dport 53 -j REDIRECT --to-ports "${redir_port}"
+        $iptables -A "${chain}" -p "${proto}" --dport 53 -j REDIRECT --to-ports "${redir_port}" 2>/dev/null || true
         ;;
       mangle)
-        $iptables -A ${chain} -p ${proto} --dport 53 -j TPROXY --on-port ${tproxy_port} --tproxy-mark ${fwmark}
+        $iptables -A "${chain}" -p "${proto}" --dport 53 -j TPROXY --on-port "${tproxy_port}" --tproxy-mark "${FWMARK}" 2>/dev/null || true
         ;;
     esac
   done
 }
 
-# REDIRECT 模式实现
-redirect() {
-  local iptables=$(get_iptables_cmd "nat" "ipv4")
+# -------------------- 处理内网流量 --------------------
+bypass_intranet() {
+  local table="$1"
+  local family="$2"
+  local iptables=$(get_iptables_cmd "$table" "$family")
 
+  if [ "$family" = "ipv4" ]; then
+    for subnet in "${intranet[@]}"; do
+      $iptables -A BOX_EXTERNAL -d "${subnet}" -j RETURN 2>/dev/null || true
+      $iptables -A BOX_LOCAL -d "${subnet}" -j RETURN 2>/dev/null || true
+    done
+  else
+    for subnet in "${intranet6[@]}"; do
+      $iptables -A BOX_EXTERNAL -d "${subnet}" -j RETURN 2>/dev/null || true
+      $iptables -A BOX_LOCAL -d "${subnet}" -j RETURN 2>/dev/null || true
+    done
+  fi
+}
+
+# -------------------- 连接跟踪优化 --------------------
+setup_conntrack_optimization() {
+  local table="$1"
+  local family="$2"
+  local iptables=$(get_iptables_cmd "$table" "$family")
+
+  $iptables -A BOX_EXTERNAL -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || true
+  $iptables -A BOX_LOCAL -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN 2>/dev/null || true
+}
+
+# -------------------- REDIRECT 模式实现 --------------------
+redirect() {
   if [ "$1" = "-d" ]; then
-    cleanup_rules nat
-    # 清除安全规则
-    $iptables -D OUTPUT -d 127.0.0.1 -p tcp -m owner --uid-owner "${box_user}" --gid-owner "${box_group}" -m tcp --dport "${redir_port}" -j REJECT 2>/dev/null
+    cleanup_rules nat ipv4
     return 0
   fi
 
-  log INFO "Setting up iptables for redirect mode"
+  log info "Setting up iptables for redirect mode"
 
-  # 初始化自定义链
+  local iptables=$(get_iptables_cmd "nat" "ipv4")
+
+  # 初始化链
   init_chains nat ipv4
 
-  # 处理 sing-box 流量
-  $iptables -I BOX_LOCAL -m owner --uid-owner "${box_user}" --gid-owner "${box_group}" -j RETURN
+  # 处理 sing-box 自身流量
+  $iptables -I BOX_LOCAL -m owner --uid-owner "${BOX_USER}" --gid-owner "${BOX_GROUP}" -j RETURN
 
   # 处理应用过滤
-  handle_packages nat BOX_LOCAL "include" ipv4
   handle_packages nat BOX_LOCAL "exclude" ipv4
+  handle_packages nat BOX_LOCAL "include" ipv4
 
-  # 内网流量处理
-  for subnet in $intranet; do
-    $iptables -A BOX_EXTERNAL -d ${subnet} -j RETURN
-    $iptables -A BOX_LOCAL -d ${subnet} -j RETURN
-  done
+  # 内网流量绕过
+  bypass_intranet nat ipv4
 
   # DNS 处理
   setup_dns nat BOX_EXTERNAL ipv4
@@ -211,10 +353,13 @@ redirect() {
 
   # 处理特殊接口
   $iptables -A BOX_EXTERNAL -p tcp -i lo -j REDIRECT --to-ports "${redir_port}"
-  for ap in $ap_list; do
+
+  for ap in "${ap_list[@]}"; do
     $iptables -A BOX_EXTERNAL -p tcp -i "${ap}" -j REDIRECT --to-ports "${redir_port}"
   done
-  $iptables -A BOX_EXTERNAL -p tcp -i tun+ -j REDIRECT --to-ports "${redir_port}"
+
+  # 连接跟踪优化
+  setup_conntrack_optimization nat ipv4
 
   # 配置链引用和默认规则
   $iptables -A BOX_EXTERNAL -j BOX_IP_V4
@@ -227,183 +372,219 @@ redirect() {
   $iptables -I OUTPUT -j BOX_LOCAL
 
   # 安全防护规则
-  $iptables -A OUTPUT -d 127.0.0.1 -p tcp -m owner --uid-owner "${box_user}" --gid-owner "${box_group}" -m tcp --dport "${redir_port}" -j REJECT
+  $iptables -A OUTPUT -d 127.0.0.1 -p tcp -m owner --uid-owner "${BOX_USER}" --gid-owner "${BOX_GROUP}" -m tcp --dport "${redir_port}" -j REJECT
 
-  # 性能优化：添加连接跟踪规则
-  $iptables -A BOX_EXTERNAL -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-  $iptables -A BOX_LOCAL -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-
-  # 优化：添加端口范围规则
-  $iptables -A BOX_EXTERNAL -p tcp --dport 1:1024 -j REDIRECT --to-ports "${redir_port}"
-  $iptables -A BOX_EXTERNAL -p udp --dport 1:1024 -j REDIRECT --to-ports "${redir_port}"
+  log info "Redirect mode setup completed"
 }
 
-# TPROXY 模式实现
+# -------------------- TPROXY 模式实现 --------------------
 tproxy() {
-  local iptables=$(get_iptables_cmd "mangle" "ipv4")
-
   if [ "$1" = "-d" ]; then
-    cleanup_rules mangle
-    # 清除路由规则
-    ip rule del fwmark "${fwmark}" table "${table}" pref "${pref}" 2>/dev/null
-    ip route del local default dev lo table "${table}" 2>/dev/null
+    cleanup_rules mangle ipv4
+    cleanup_policy_routing
     return 0
   fi
 
-  log INFO "Setting up iptables for tproxy mode"
+  log info "Setting up iptables for tproxy mode"
 
-  # 初始化自定义链
+  local iptables=$(get_iptables_cmd "mangle" "ipv4")
+
+  # 初始化链
   init_chains mangle ipv4
 
   # 配置策略路由
-  ip rule del fwmark "${fwmark}" table "${table}" pref "${pref}" 2>/dev/null
-  ip route del local default dev lo table "${table}" 2>/dev/null
-  ip rule add fwmark "${fwmark}" table "${table}" pref "${pref}"
-  ip route add local default dev lo table "${table}"
+  log info "Setting up policy routing"
+  ip rule del fwmark "${FWMARK}" table "${ROUTE_TABLE}" pref "${ROUTE_PREF}" 2>/dev/null || true
+  ip route del local default dev lo table "${ROUTE_TABLE}" 2>/dev/null || true
+  ip rule add fwmark "${FWMARK}" table "${ROUTE_TABLE}" pref "${ROUTE_PREF}"
+  ip route add local default dev lo table "${ROUTE_TABLE}"
 
-  # 处理 sing-box 流量
-  $iptables -I BOX_LOCAL -m owner --uid-owner ${box_user} --gid-owner ${box_group} -j RETURN
+  # 处理 sing-box 自身流量
+  $iptables -I BOX_LOCAL -m owner --uid-owner "${BOX_USER}" --gid-owner "${BOX_GROUP}" -j RETURN
 
   # 应用过滤
-  handle_packages mangle BOX_LOCAL "include" ipv4
   handle_packages mangle BOX_LOCAL "exclude" ipv4
+  handle_packages mangle BOX_LOCAL "include" ipv4
 
-  # 内网流量处理
-  for subnet in $intranet; do
-    $iptables -A BOX_EXTERNAL -d ${subnet} -j RETURN
-    $iptables -A BOX_LOCAL -d ${subnet} -j RETURN
-  done
+  # 内网流量绕过
+  bypass_intranet mangle ipv4
 
   # DNS 处理
   setup_dns mangle BOX_EXTERNAL ipv4
 
   # 处理特殊接口
   for proto in tcp udp; do
-    $iptables -A BOX_EXTERNAL -p ${proto} -i lo -j TPROXY --on-port "${tproxy_port}" --tproxy-mark "${fwmark}"
-    for ap in $ap_list; do
-      $iptables -A BOX_EXTERNAL -p ${proto} -i "${ap}" -j TPROXY --on-port "${tproxy_port}" --tproxy-mark "${fwmark}"
+    $iptables -A BOX_EXTERNAL -p "${proto}" -i lo -j TPROXY --on-port "${tproxy_port}" --tproxy-mark "${FWMARK}"
+    for ap in "${ap_list[@]}"; do
+      $iptables -A BOX_EXTERNAL -p "${proto}" -i "${ap}" -j TPROXY --on-port "${tproxy_port}" --tproxy-mark "${FWMARK}"
     done
   done
+
+  # 连接跟踪优化
+  setup_conntrack_optimization mangle ipv4
 
   # 配置链引用和默认规则
   $iptables -A BOX_EXTERNAL -j BOX_IP_V4
   $iptables -A BOX_LOCAL -j BOX_IP_V4
-  $iptables -A BOX_LOCAL -p tcp -j MARK --set-mark "${fwmark}"
-  $iptables -A BOX_LOCAL -p udp -j MARK --set-mark "${fwmark}"
+  $iptables -A BOX_LOCAL -p tcp -j MARK --set-mark "${FWMARK}"
+  $iptables -A BOX_LOCAL -p udp -j MARK --set-mark "${FWMARK}"
 
   # 配置主链
   $iptables -I PREROUTING -j BOX_EXTERNAL
   $iptables -I OUTPUT -j BOX_LOCAL
 
-  # 性能优化：添加连接跟踪规则
-  $iptables -A BOX_EXTERNAL -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-  $iptables -A BOX_LOCAL -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-
-  # 优化：添加端口范围规则
-  $iptables -A BOX_EXTERNAL -p tcp --dport 1:1024 -j TPROXY --on-port "${tproxy_port}" --tproxy-mark "${fwmark}"
-  $iptables -A BOX_EXTERNAL -p udp --dport 1:1024 -j TPROXY --on-port "${tproxy_port}" --tproxy-mark "${fwmark}"
-
-  # 优化：添加 TCP 状态规则
-  $iptables -A BOX_EXTERNAL -p tcp -m tcp --tcp-flags SYN,RST,ACK SYN -j TPROXY --on-port "${tproxy_port}" --tproxy-mark "${fwmark}"
-}
-
-# IPv6 规则处理
-setup_ipv6_rules() {
-  if [ "${ipv6}" != "true" ]; then
-    return 0
+  # 设置 IPv6 规则
+  if [ "${ipv6}" = "true" ]; then
+    setup_ipv6_rules
   fi
 
-  local iptables=$(get_iptables_cmd "mangle" "ipv6")
-  
+  log info "TPROXY mode setup completed"
+}
+
+# -------------------- IPv6 规则处理 --------------------
+setup_ipv6_rules() {
+  log info "Setting up IPv6 rules for tproxy mode"
+
+  local ip6tables=$(get_iptables_cmd "mangle" "ipv6")
+
   # 初始化 IPv6 链
   init_chains mangle ipv6
 
-  # 处理 IPv6 流量
-  $iptables -A BOX_EXTERNAL -j BOX_IP_V6
-  $iptables -A BOX_LOCAL -j BOX_IP_V6
+  # 配置 IPv6 策略路由
+  log info "Setting up IPv6 policy routing"
+  ip -6 rule del fwmark "${FWMARK}" table "${ROUTE_TABLE}" pref "${ROUTE_PREF}" 2>/dev/null || true
+  ip -6 route del local default dev lo table "${ROUTE_TABLE}" 2>/dev/null || true
+  ip -6 rule add fwmark "${FWMARK}" table "${ROUTE_TABLE}" pref "${ROUTE_PREF}"
+  ip -6 route add local default dev lo table "${ROUTE_TABLE}"
+
+  # 删除 IPv6 阻断规则
+  ip -6 rule del unreachable pref "${ROUTE_PREF}" 2>/dev/null || true
+
+  # 处理 sing-box 自身流量
+  $ip6tables -I BOX_LOCAL -m owner --uid-owner "${BOX_USER}" --gid-owner "${BOX_GROUP}" -j RETURN
+
+  # 应用过滤
+  handle_packages mangle BOX_LOCAL "exclude" ipv6
+  handle_packages mangle BOX_LOCAL "include" ipv6
+
+  # 内网流量绕过
+  bypass_intranet mangle ipv6
+
+  # DNS 处理
+  setup_dns mangle BOX_EXTERNAL ipv6
+
+  # 处理特殊接口
+  for proto in tcp udp; do
+    $ip6tables -A BOX_EXTERNAL -p "${proto}" -i lo -j TPROXY --on-port "${tproxy_port}" --tproxy-mark "${FWMARK}"
+    for ap in "${ap_list[@]}"; do
+      $ip6tables -A BOX_EXTERNAL -p "${proto}" -i "${ap}" -j TPROXY --on-port "${tproxy_port}" --tproxy-mark "${FWMARK}"
+    done
+  done
+
+  # 连接跟踪优化
+  setup_conntrack_optimization mangle ipv6
+
+  # 配置链引用和默认规则
+  $ip6tables -A BOX_EXTERNAL -j BOX_IP_V6
+  $ip6tables -A BOX_LOCAL -j BOX_IP_V6
+  $ip6tables -A BOX_LOCAL -p tcp -j MARK --set-mark "${FWMARK}"
+  $ip6tables -A BOX_LOCAL -p udp -j MARK --set-mark "${FWMARK}"
 
   # 配置主链
-  $iptables -I PREROUTING -j BOX_EXTERNAL
-  $iptables -I OUTPUT -j BOX_LOCAL
+  $ip6tables -I PREROUTING -j BOX_EXTERNAL
+  $ip6tables -I OUTPUT -j BOX_LOCAL
+
+  # 添加 UDP DNS 阻断规则（强制使用 DoH/DoT）
+  if ! $ip6tables -C OUTPUT -p udp --destination-port 53 -j DROP 2>/dev/null; then
+    $ip6tables -A OUTPUT -p udp --destination-port 53 -j DROP
+  fi
+
+  log info "IPv6 rules setup completed"
 }
 
-# 清理 IPv6 规则
-cleanup_ipv6_rules() {
-  local iptables=$(get_iptables_cmd "mangle" "ipv6")
-  
-  for chain in $chains; do
-    $iptables -F "$chain" 2>/dev/null
-    $iptables -X "$chain" 2>/dev/null
-  done
-}
-
-# 优化的 TUN 模式实现
+# -------------------- TUN 模式实现 --------------------
 tun() {
-  local iptables=$(get_iptables_cmd "filter" "ipv4")
-
   if [ -z "${tun_device}" ]; then
-    log ERROR "Variable tun_device not set"
+    log error "Variable tun_device not set"
     exit 1
   fi
 
   if [ "$1" = "-d" ]; then
-    log INFO "Cleaning up tun mode rules"
-    $iptables -D FORWARD -i "${tun_device}" -j ACCEPT
-    $iptables -D FORWARD -o "${tun_device}" -j ACCEPT
+    log info "Cleaning up tun mode rules"
+    local iptables=$(get_iptables_cmd "filter" "ipv4")
+    $iptables -D FORWARD -i "${tun_device}" -j ACCEPT 2>/dev/null || true
+    $iptables -D FORWARD -o "${tun_device}" -j ACCEPT 2>/dev/null || true
+
+    if [ "${ipv6}" = "true" ]; then
+      local ip6tables=$(get_iptables_cmd "filter" "ipv6")
+      $ip6tables -D FORWARD -i "${tun_device}" -j ACCEPT 2>/dev/null || true
+      $ip6tables -D FORWARD -o "${tun_device}" -j ACCEPT 2>/dev/null || true
+    fi
     return 0
   fi
 
   # 检查 TUN 设备是否存在
-  if ! busybox ifconfig | grep -q "${tun_device}" 2>/dev/null; then
-    log ERROR "TUN device ${tun_device} not found"
+  if ! busybox ifconfig 2>/dev/null | grep -q "${tun_device}"; then
+    log error "TUN device ${tun_device} not found"
     exit 1
   fi
 
-  log INFO "Setting up iptables for tun mode"
+  log info "Setting up iptables for tun mode"
+
+  local iptables=$(get_iptables_cmd "filter" "ipv4")
   $iptables -I FORWARD -i "${tun_device}" -j ACCEPT
   $iptables -I FORWARD -o "${tun_device}" -j ACCEPT
+
+  # IPv6 支持
+  if [ "${ipv6}" = "true" ]; then
+    local ip6tables=$(get_iptables_cmd "filter" "ipv6")
+    $ip6tables -I FORWARD -i "${tun_device}" -j ACCEPT
+    $ip6tables -I FORWARD -o "${tun_device}" -j ACCEPT
+  fi
 
   # 系统参数优化
   sysctl -w net.ipv4.conf.default.rp_filter=2 &>/dev/null
   sysctl -w net.ipv4.conf.all.rp_filter=2 &>/dev/null
 
-  # 性能优化：添加连接跟踪规则
-  $iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-
-  # 优化：添加 TCP 状态规则
-  $iptables -A FORWARD -p tcp -m tcp --tcp-flags SYN,RST,ACK SYN -j ACCEPT
-
-  # 优化：添加 ICMP 规则
-  $iptables -A FORWARD -p icmp -j ACCEPT
-
-  # 优化：添加 MTU 规则
-  $iptables -A FORWARD -p tcp -m tcp --tcp-flags SYN,RST,ACK SYN -m tcpmss --mss 1400:65535 -j TCPMSS --set-mss 1400
+  log info "TUN mode setup completed"
 }
 
-# 主程序入口
+# -------------------- 主程序入口 --------------------
 main() {
-  log INFO "Starting iptables configuration"
-  check_requirements
-  
+  log info "Starting iptables configuration"
+
+  # 初始化配置（静默模式，避免重复日志）
+  init_config true || exit 1
+
+  # 检查系统要求
+  check_requirements "$1" || exit 1
+
   # 根据模式执行相应的配置
   case "$1" in
-    "redirect") redirect "$2" ;;
-    "tproxy") tproxy "$2" ;;
-    "tun") tun "$2" ;;
-    "clear")
-      redirect -d
-      tproxy -d
-      tun -d
-      cleanup_ipv6_rules
+    redirect)
+      redirect "$2"
       ;;
-    *) log ERROR "Invalid mode: $1" && exit 1 ;;
+    tproxy)
+      tproxy "$2"
+      ;;
+    tun)
+      tun "$2"
+      ;;
+    clear)
+      cleanup_all
+      ;;
+    *)
+      log error "Invalid mode: $1"
+      log info "Usage: $0 {redirect|tproxy|tun|clear} [-d]"
+      exit 1
+      ;;
   esac
 
-  log INFO "Configuration completed successfully"
+  log info "Configuration completed successfully"
 }
 
 # 执行主程序
 main "$@"
 
-# 清理手机产商的网络限制
+# 清理手机厂商的网络限制（后台执行）
 (sleep 3 && cleanup_limit) &

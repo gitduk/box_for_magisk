@@ -19,6 +19,9 @@ log() {
   local level="$1"
   local message="$2"
 
+  # 统一转换为大写显示
+  local display_level=$(echo "$level" | tr '[:lower:]' '[:upper:]')
+
   case "$level" in
     info)
       [ -t 1 ] && echo -e "\033[1;32m${now} [INFO]: ${message}\033[0m" || echo "${now} [INFO]: ${message}" | tee -a "${RUN_LOG}"
@@ -33,15 +36,16 @@ log() {
       [ -t 1 ] && echo -e "\033[1;36m${now} [DEBUG]: ${message}\033[0m" || echo "${now} [DEBUG]: ${message}" | tee -a "${RUN_LOG}"
       ;;
     *)
-      [ -t 1 ] && echo -e "\033[1;30m${now} [${level}]: ${message}\033[0m" || echo "${now} [${level}]: ${message}" | tee -a "${RUN_LOG}"
-      # 更新模块描述
-      if [ -f "${PROPFILE}" ]; then
-        local escaped_level=$(printf '%s\n' "$level" | sed 's/[\/&]/\\&/g')
-        local escaped_msg=$(printf '%s\n' "$message" | sed 's/[\/&]/\\&/g')
-        sed -Ei "s/^description=.*/description=${now} [${escaped_level}]: ${escaped_msg} /g" "${PROPFILE}"
-      fi
+      [ -t 1 ] && echo -e "\033[1;30m${now} [${display_level}]: ${message}\033[0m" || echo "${now} [${display_level}]: ${message}" | tee -a "${RUN_LOG}"
       ;;
   esac
+
+  # 更新模块描述（所有日志级别都更新）
+  if [ -f "${PROPFILE}" ]; then
+    local escaped_level=$(printf '%s\n' "$display_level" | sed 's/[\/&]/\\&/g')
+    local escaped_msg=$(printf '%s\n' "$message" | sed 's/[\/&]/\\&/g')
+    sed -Ei "s/^description=.*/description=${now} [${escaped_level}]: ${escaped_msg} /g" "${PROPFILE}" 2>/dev/null || true
+  fi
 }
 
 # -------------------- 日志轮转函数 --------------------

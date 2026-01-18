@@ -1,6 +1,6 @@
 id=box_for_magisk
 name=SingBox for Magisk
-version=v1.3.0
+version=v1.3.1
 versionCode=20260118
 author=gitduk
 description=use sing-box for tproxy on android device

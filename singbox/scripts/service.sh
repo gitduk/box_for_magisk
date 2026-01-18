@@ -152,6 +152,10 @@ start_box() {
     return 1
   fi
 
+  # 清理可能残留的 iptables 规则和路由，确保干净的启动环境
+  log info "Cleaning up any existing rules before start"
+  ${0%/*}/iptables.sh "clear" >/dev/null 2>&1 || true
+
   # 验证配置文件
   log info "Validating configuration"
   if ! ${BIN_PATH} check -D "${BOX_DIR}/" -C "${BOX_DIR}" > "${BOX_LOG}" 2>&1; then
@@ -200,7 +204,7 @@ start_box() {
   # 配置 IPv6
   setup_ipv6
 
-  log INFO "module started successfully"
+  log INFO "${BIN_NAME} started successfully"
   return 0
 }
 
@@ -210,39 +214,45 @@ stop_box() {
 
   log info "Stopping ${BIN_NAME} service"
 
-  # 检查进程是否在运行
-  if ! busybox pidof "${BIN_NAME}" >/dev/null 2>&1; then
+  # 检查进程是否在运行（尝试多种方式）
+  local pid=$(busybox pidof "${BIN_NAME}" 2>/dev/null || pidof "${BIN_NAME}" 2>/dev/null || ps | grep "${BIN_NAME}" | grep -v grep | awk '{print $1}' | head -1)
+
+  if [ -z "$pid" ]; then
     log warn "${BIN_NAME} is not running"
     # 清理 iptables 规则
     ${0%/*}/iptables.sh "clear" 2>/dev/null || true
     return 0
   fi
 
+  log info "Found ${BIN_NAME} process (PID: $pid)"
+
   # 清理 iptables 规则
   log info "Cleaning up iptables rules"
   ${0%/*}/iptables.sh "clear" 2>/dev/null || true
 
   # 温和停止
-  if ! safe_kill "${BIN_NAME}" 15; then
-    log warn "${BIN_NAME} process not found"
-    return 0
-  fi
+  log info "Sending SIGTERM to ${BIN_NAME} (PID: $pid)"
+  kill -15 $pid 2>/dev/null || true
 
   # 等待进程退出
   sleep "${SHUTDOWN_WAIT}"
 
   # 检查是否需要强制停止
-  if busybox pidof "${BIN_NAME}" >/dev/null 2>&1; then
+  pid=$(busybox pidof "${BIN_NAME}" 2>/dev/null || pidof "${BIN_NAME}" 2>/dev/null || ps | grep "${BIN_NAME}" | grep -v grep | awk '{print $1}' | head -1)
+
+  if [ -n "$pid" ]; then
     if [ "$force_kill" = true ] || [ "$1" = "-f" ]; then
-      force_kill "${BIN_NAME}"
+      log warn "${BIN_NAME} still running, sending SIGKILL"
+      kill -9 $pid 2>/dev/null || true
+      sleep 1
     else
-      log WARN "${BIN_NAME} is still running, may be shutting down"
+      log warn "${BIN_NAME} is still running (PID: $pid), may be shutting down"
       log info "Use 'force-stop' to forcefully terminate the process"
       return 1
     fi
   fi
 
-  log INFO "${BIN_NAME} service stopped"
+  log info "${BIN_NAME} service stopped"
   return 0
 }
 

@@ -161,10 +161,10 @@ cleanup_rules() {
   fi
 
   if [ "$table" = "filter" ]; then
-    [ -n "$tun_device" ] && {
+    if [ -n "$tun_device" ]; then
       $iptables -D FORWARD -i "${tun_device}" -j ACCEPT 2>/dev/null || true
       $iptables -D FORWARD -o "${tun_device}" -j ACCEPT 2>/dev/null || true
-    }
+    fi
   fi
 }
 
@@ -394,10 +394,12 @@ tproxy() {
 
   # 配置策略路由
   log info "Setting up policy routing"
+  # 先删除可能存在的旧规则
   ip rule del fwmark "${FWMARK}" table "${ROUTE_TABLE}" pref "${ROUTE_PREF}" 2>/dev/null || true
   ip route del local default dev lo table "${ROUTE_TABLE}" 2>/dev/null || true
-  ip rule add fwmark "${FWMARK}" table "${ROUTE_TABLE}" pref "${ROUTE_PREF}"
-  ip route add local default dev lo table "${ROUTE_TABLE}"
+  # 添加新规则（使用 || true 防止重复添加时失败）
+  ip rule add fwmark "${FWMARK}" table "${ROUTE_TABLE}" pref "${ROUTE_PREF}" 2>/dev/null || true
+  ip route add local default dev lo table "${ROUTE_TABLE}" 2>/dev/null || true
 
   # 处理 sing-box 自身流量
   $iptables -I BOX_LOCAL -m owner --uid-owner "${BOX_USER}" --gid-owner "${BOX_GROUP}" -j RETURN

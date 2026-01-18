@@ -233,6 +233,11 @@ show_config_summary() {
 init_config() {
   local quiet="${1:-false}"
 
+  # 如果已经初始化过，使用静默模式避免重复日志
+  if [ -n "$CONFIG_INITIALIZED" ]; then
+    quiet="true"
+  fi
+
   setup_environment
 
   if ! validate_required_files; then
@@ -246,6 +251,9 @@ init_config() {
   check_busybox_version "$quiet"
 
   show_config_summary "$quiet"
+
+  # 标记已初始化
+  export CONFIG_INITIALIZED=1
 
   return 0
 }

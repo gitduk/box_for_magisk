@@ -162,6 +162,35 @@ build_intranet_list() {
   export intranet intranet6
 }
 
+# -------------------- 检查配置一致性 --------------------
+validate_config_consistency() {
+  local quiet="${1:-false}"
+
+  # 重要：如果 config.json 中有 TUN inbound，sing-box 需要完整 root 权限
+  # 无论 network_mode 设置为什么，都需要调整启动方式
+  if [ -n "$tun_device" ] && [ "$network_mode" != "tun" ]; then
+    [ "$quiet" = "false" ] && log warn "Configuration notice:"
+    [ "$quiet" = "false" ] && log warn "  - Your config.json has TUN inbound (${tun_device})"
+    [ "$quiet" = "false" ] && log warn "  - But settings.ini has network_mode=\"${network_mode}\""
+    [ "$quiet" = "false" ] && log warn "  - Will use full root privileges to support TUN inbound"
+    [ "$quiet" = "false" ] && log warn "  - iptables rules will be configured for ${network_mode} mode"
+
+    # 设置标志，表示需要使用完整 root 权限
+    export REQUIRE_ROOT_FOR_TUN="true"
+  fi
+
+  # 检查是否设置了对应的端口
+  if [ "$network_mode" = "tproxy" ] && [ -z "$tproxy_port" ]; then
+    [ "$quiet" = "false" ] && log warn "network_mode is tproxy but no tproxy inbound found in config.json"
+  elif [ "$network_mode" = "redirect" ] && [ -z "$redir_port" ]; then
+    [ "$quiet" = "false" ] && log warn "network_mode is redirect but no redirect inbound found in config.json"
+  elif [ "$network_mode" = "tun" ] && [ -z "$tun_device" ]; then
+    [ "$quiet" = "false" ] && log warn "network_mode is tun but no tun inbound found in config.json"
+  fi
+
+  return 0
+}
+
 # -------------------- 检查 sing-box 配置 --------------------
 validate_singbox_config() {
   if [ ! -f "${BIN_PATH}" ]; then
@@ -248,6 +277,13 @@ init_config() {
   load_config_json "$quiet"
   load_settings_ini "$quiet"
   build_intranet_list
+
+  # 验证配置一致性（在显示摘要之前）
+  if ! validate_config_consistency "$quiet"; then
+    log error "Configuration consistency validation failed"
+    return 1
+  fi
+
   check_busybox_version "$quiet"
 
   show_config_summary "$quiet"

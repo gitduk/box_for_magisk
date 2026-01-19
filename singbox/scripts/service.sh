@@ -12,10 +12,29 @@ source "${0%/*}/config.sh"
 
 # -------------------- 修复权限 --------------------
 fix_permissions() {
-  # 修复二进制文件权限
+  # 修复二进制文件权限（必须可执行）
   if [ -f "${BIN_PATH}" ]; then
-    chmod 755 "${BIN_PATH}" 2>/dev/null || true
+    chmod 755 "${BIN_PATH}" 2>/dev/null || log warn "Failed to chmod sing-box binary"
     chown "${BOX_USER_GROUP}" "${BIN_PATH}" 2>/dev/null || true
+
+    # 验证权限是否设置成功
+    if [ ! -x "${BIN_PATH}" ]; then
+      log error "sing-box binary is not executable after chmod"
+      log error "Current permissions: $(ls -l ${BIN_PATH})"
+    fi
+
+    # 设置 Linux capabilities（用于 TUN 设备访问）
+    # 这允许在使用 setuidgid 降低权限后仍然能创建 TUN 设备
+    if [ -n "${tun_device}" ]; then
+      if command_exists setcap; then
+        log info "Setting capabilities for sing-box binary"
+        setcap 'cap_net_admin,cap_net_raw,cap_net_bind_service+ep' "${BIN_PATH}" 2>/dev/null && \
+          log info "Capabilities set successfully" || \
+          log warn "Failed to set capabilities (may need to run as full root for TUN)"
+      else
+        log warn "setcap not found, TUN mode will require full root privileges"
+      fi
+    fi
   fi
 
   if [ -f "${JQ_PATH}" ]; then
@@ -66,20 +85,90 @@ check_system_requirements() {
   fi
 
   # 检查并创建 TUN 设备
-  if [ -n "${tun_device}" ] && [ "${network_mode}" = "tun" ]; then
-    safe_mkdir /dev/net 0755
-    [ ! -L /dev/net/tun ] && ln -s /dev/tun /dev/net/tun 2>/dev/null
+  # 只要 config.json 中配置了 TUN inbound，就需要准备 TUN 设备
+  if [ -n "${tun_device}" ]; then
+    log info "Preparing TUN device for sing-box"
 
-    if [ ! -c "/dev/net/tun" ]; then
-      log error "Cannot create /dev/net/tun"
+    # 创建 /dev/net 目录
+    safe_mkdir /dev/net 0755
+
+    # 检查并创建 TUN 设备节点
+    if [ ! -c "/dev/tun" ]; then
+      # 尝试创建 TUN 设备节点
+      log warn "/dev/tun not found, trying to create it"
+      mknod /dev/tun c 10 200 2>/dev/null || log warn "Failed to create /dev/tun"
+    fi
+
+    # 创建符号链接
+    if [ -L /dev/net/tun ]; then
+      rm -f /dev/net/tun 2>/dev/null
+    fi
+    ln -sf /dev/tun /dev/net/tun 2>/dev/null
+
+    # 验证设备是否可用
+    if [ ! -c "/dev/net/tun" ] && [ ! -c "/dev/tun" ]; then
+      log error "Cannot create TUN device"
       log warn "System may not support TUN/TAP driver or kernel incompatibility"
       log info "Falling back to tproxy mode"
-
-      # 持久化降级决策
       sed -i 's/network_mode=.*/network_mode="tproxy"/g' "${SETTINGS_INI}"
       network_mode="tproxy"
       export network_mode
       return 1
+    fi
+
+    # 设置 TUN 设备权限（多种尝试）
+    log info "Setting TUN device permissions"
+    chmod 0666 /dev/tun 2>/dev/null || log warn "Failed to chmod /dev/tun"
+    chmod 0666 /dev/net/tun 2>/dev/null || log warn "Failed to chmod /dev/net/tun"
+
+    # 设置所有权
+    chown root:root /dev/tun 2>/dev/null || true
+    chown root:root /dev/net/tun 2>/dev/null || true
+
+    # 显示设备状态
+    log info "TUN device status:"
+    ls -lZ /dev/tun /dev/net/tun 2>&1 | while read -r line; do
+      log info "  $line"
+    done
+
+    # 尝试多种 SELinux 上下文
+    if command_exists chcon; then
+      log info "Setting SELinux context for TUN device"
+      chcon u:object_r:tun_device:s0 /dev/tun 2>/dev/null || \
+      chcon u:object_r:device:s0 /dev/tun 2>/dev/null || \
+      true
+
+      chcon u:object_r:tun_device:s0 /dev/net/tun 2>/dev/null || \
+      chcon u:object_r:device:s0 /dev/net/tun 2>/dev/null || \
+      true
+    fi
+
+    # 处理 SELinux
+    if command_exists setenforce; then
+      current_selinux=$(getenforce 2>/dev/null)
+      log info "SELinux status: ${current_selinux}"
+      if [ "$current_selinux" = "Enforcing" ]; then
+        log warn "SELinux is enforcing, attempting to fix contexts"
+
+        # 设置 sing-box 二进制的 SELinux context
+        if command_exists chcon; then
+          log info "Setting SELinux context for sing-box binary"
+          # 尝试多种可能的 context
+          chcon u:object_r:system_file:s0 "${BIN_PATH}" 2>/dev/null || \
+          chcon u:object_r:executable_file:s0 "${BIN_PATH}" 2>/dev/null || \
+          restorecon "${BIN_PATH}" 2>/dev/null || \
+          true
+
+          # 显示当前 context
+          ls -Z "${BIN_PATH}" | while read -r line; do
+            log info "  sing-box context: $line"
+          done
+        fi
+
+        # 如果仍然是 Enforcing，建议用户禁用
+        log warn "If TUN still fails, try: setenforce 0"
+        log warn "To make it permanent, add 'SELINUX=permissive' to /system/etc/selinux/config"
+      fi
     fi
   fi
 
@@ -169,12 +258,72 @@ start_box() {
   # 配置系统参数
   configure_system_parameters
 
+  # TUN 模式下处理 SELinux（如果需要）
+  if [ -n "${tun_device}" ] && command_exists getenforce; then
+    current_selinux=$(getenforce 2>/dev/null)
+    if [ "$current_selinux" = "Enforcing" ]; then
+      log warn "SELinux is Enforcing, TUN mode may fail"
+      log warn "Attempting to set Permissive mode temporarily"
+
+      # 尝试临时设置为 Permissive
+      if setenforce 0 2>/dev/null; then
+        log info "SELinux set to Permissive mode for TUN operation"
+        log info "Will restore to Enforcing after service starts"
+        export SELINUX_WAS_ENFORCING="true"
+      else
+        log error "Failed to set SELinux to Permissive"
+        log error "You may need to manually run: setenforce 0"
+      fi
+    fi
+  fi
+
   # 启动服务
   log info "Launching ${BIN_NAME} process"
-  nohup busybox setuidgid "${BOX_USER_GROUP}" "${BIN_PATH}" run \
-    -D "${BOX_DIR}" \
-    -C "${BOX_DIR}" \
-    >> "${BOX_LOG}" 2>&1 &
+
+  # 决定启动方式
+  # 策略：
+  # 1. 优先使用 setuidgid + capabilities（更安全）
+  # 2. 如果 setcap 失败，TUN 模式使用完整 root
+  # 3. 其他模式总是使用 setuidgid
+
+  local use_full_root=false
+
+  # 检查是否需要 TUN 支持
+  if [ "${network_mode}" = "tun" ] || [ "${REQUIRE_ROOT_FOR_TUN}" = "true" ]; then
+    # 检查是否成功设置了 capabilities
+    if command_exists getcap && getcap "${BIN_PATH}" 2>/dev/null | grep -q "cap_net_admin"; then
+      log info "Capabilities detected, using setuidgid with enhanced privileges"
+      log info "Starting sing-box as ${BOX_USER_GROUP} with capabilities"
+      nohup busybox setuidgid "${BOX_USER_GROUP}" "${BIN_PATH}" run \
+        -D "${BOX_DIR}" \
+        -C "${BOX_DIR}" \
+        >> "${BOX_LOG}" 2>&1 &
+    else
+      # Capabilities 未设置，使用完整 root
+      log warn "Capabilities not set, falling back to full root privileges"
+      use_full_root=true
+    fi
+  fi
+
+  # 使用完整 root 权限（仅在必要时）
+  if [ "$use_full_root" = "true" ]; then
+    if [ "$(id -u)" -ne 0 ]; then
+      log error "Not running as root, cannot start TUN mode"
+      return 1
+    fi
+
+    log info "Starting sing-box with full root privileges (UID=0 GID=0)"
+    nohup sh -c "cd ${BOX_DIR} && exec ${BIN_PATH} run -D ${BOX_DIR} -C ${BOX_DIR}" \
+      >> "${BOX_LOG}" 2>&1 &
+
+  # 普通模式（无 TUN）
+  elif [ "$use_full_root" = "false" ] && [ -z "${REQUIRE_ROOT_FOR_TUN}" ]; then
+    log info "Starting sing-box as ${BOX_USER_GROUP}"
+    nohup busybox setuidgid "${BOX_USER_GROUP}" "${BIN_PATH}" run \
+      -D "${BOX_DIR}" \
+      -C "${BOX_DIR}" \
+      >> "${BOX_LOG}" 2>&1 &
+  fi
 
   # 等待进程启动
   sleep "${STARTUP_WAIT}"

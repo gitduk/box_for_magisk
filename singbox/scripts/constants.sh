@@ -59,6 +59,10 @@ readonly SHUTDOWN_WAIT=0.5
 # -------------------- 系统限制 --------------------
 readonly FILE_DESCRIPTOR_LIMIT=1000000
 
+# -------------------- 网络下载常量 --------------------
+readonly DOWNLOAD_TIMEOUT=30
+readonly DOWNLOAD_MAX_RETRIES=3
+
 # -------------------- 时区 --------------------
 readonly TIMEZONE="Asia/Shanghai"
 

@@ -20,6 +20,66 @@ setup_environment() {
   fi
 }
 
+# -------------------- 下载配置文件 --------------------
+download_config_from_url() {
+  local url="$1"
+  local retry_count=0
+
+  log info "Downloading configuration from URL: ${url}"
+
+  # 检查是否有可用的下载工具
+  local download_tool=""
+  if command -v curl >/dev/null 2>&1; then
+    download_tool="curl"
+  elif command -v wget >/dev/null 2>&1; then
+    download_tool="wget"
+  else
+    log error "Neither curl nor wget found. Cannot download configuration file."
+    log error "Please install curl or wget, or manually place config.json in ${BOX_DIR}/"
+    return 1
+  fi
+
+  # 重试下载
+  while [ $retry_count -lt $DOWNLOAD_MAX_RETRIES ]; do
+    log info "Download attempt $((retry_count + 1))/${DOWNLOAD_MAX_RETRIES}..."
+
+    # 根据工具选择下载命令
+    if [ "$download_tool" = "curl" ]; then
+      if curl -L -f -s -m "${DOWNLOAD_TIMEOUT}" -o "${CONFIG_JSON}" "${url}"; then
+        log info "Configuration downloaded successfully"
+
+        # 验证下载的文件是否是有效的 JSON
+        if [ -f "${JQ_PATH}" ] && ${JQ_PATH} empty "${CONFIG_JSON}" >/dev/null 2>&1; then
+          log info "Downloaded configuration is valid JSON"
+          return 0
+        else
+          log warn "Downloaded file is not valid JSON, retrying..."
+          rm -f "${CONFIG_JSON}" 2>/dev/null
+        fi
+      fi
+    else
+      if wget -q -T "${DOWNLOAD_TIMEOUT}" -O "${CONFIG_JSON}" "${url}"; then
+        log info "Configuration downloaded successfully"
+
+        # 验证下载的文件是否是有效的 JSON
+        if [ -f "${JQ_PATH}" ] && ${JQ_PATH} empty "${CONFIG_JSON}" >/dev/null 2>&1; then
+          log info "Downloaded configuration is valid JSON"
+          return 0
+        else
+          log warn "Downloaded file is not valid JSON, retrying..."
+          rm -f "${CONFIG_JSON}" 2>/dev/null
+        fi
+      fi
+    fi
+
+    retry_count=$((retry_count + 1))
+    [ $retry_count -lt $DOWNLOAD_MAX_RETRIES ] && sleep 2
+  done
+
+  log error "Failed to download configuration after ${DOWNLOAD_MAX_RETRIES} attempts"
+  return 1
+}
+
 # -------------------- 验证必需文件 --------------------
 validate_required_files() {
   local missing_files=0
@@ -33,16 +93,47 @@ validate_required_files() {
     chmod 0700 "${JQ_PATH}" 2>/dev/null || missing_files=$((missing_files + 1))
   fi
 
-  # 检查 config.json
-  if [ ! -f "${CONFIG_JSON}" ]; then
-    log error "Cannot find ${CONFIG_JSON}"
-    missing_files=$((missing_files + 1))
-  fi
-
-  # 检查 settings.ini
+  # 先检查 settings.ini 是否存在
   if [ ! -f "${SETTINGS_INI}" ]; then
     log error "Cannot find ${SETTINGS_INI}"
     missing_files=$((missing_files + 1))
+  fi
+
+  # 检查 config.json
+  if [ ! -f "${CONFIG_JSON}" ]; then
+    log warn "config.json not found at ${CONFIG_JSON}"
+
+    # 如果 settings.ini 存在，尝试从 URL 下载
+    if [ -f "${SETTINGS_INI}" ]; then
+      # 加载 settings.ini 获取 URL
+      source "${SETTINGS_INI}"
+
+      if [ -n "${config_url}" ] && [ "${config_url}" != "" ]; then
+        log info "Found config_url in settings.ini, attempting to download..."
+
+        if download_config_from_url "${config_url}"; then
+          log info "Configuration file downloaded successfully"
+        else
+          log error "Failed to download configuration from URL: ${config_url}"
+          log error ""
+          log error "Please either:"
+          log error "  1. Check if the URL is accessible: ${config_url}"
+          log error "  2. Manually place your config.json in: ${BOX_DIR}/"
+          log error "  3. Fix the 'config_url' setting in: ${SETTINGS_INI}"
+          missing_files=$((missing_files + 1))
+        fi
+      else
+        log error "config.json not found and no config_url configured"
+        log error ""
+        log error "Please either:"
+        log error "  1. Place your config.json in: ${BOX_DIR}/"
+        log error "  2. Add 'config_url=\"https://your-url/config.json\"' in: ${SETTINGS_INI}"
+        missing_files=$((missing_files + 1))
+      fi
+    else
+      log error "Cannot find ${CONFIG_JSON}, and ${SETTINGS_INI} is also missing"
+      missing_files=$((missing_files + 1))
+    fi
   fi
 
   [ $missing_files -gt 0 ] && return 1
@@ -162,9 +253,137 @@ build_intranet_list() {
   export intranet intranet6
 }
 
+# -------------------- 清理不匹配的 inbound 配置 --------------------
+remove_mismatched_inbounds() {
+  local target_mode="$1"
+  local quiet="${2:-false}"
+
+  # 检查 jq 是否可用
+  if [ ! -f "${JQ_PATH}" ]; then
+    log error "jq not found, cannot clean up inbound configurations"
+    return 1
+  fi
+
+  # 检查 config.json 是否存在
+  if [ ! -f "${CONFIG_JSON}" ]; then
+    log error "config.json not found, cannot clean up inbound configurations"
+    return 1
+  fi
+
+  # 创建备份
+  local backup_file="${CONFIG_JSON}.backup.$(date +%Y%m%d_%H%M%S)"
+  cp "${CONFIG_JSON}" "${backup_file}" 2>/dev/null
+  [ "$quiet" = "false" ] && log info "Created backup: ${backup_file}"
+
+  # 获取当前所有 inbound 类型
+  local all_types=$(${JQ_PATH} -r '.inbounds[].type' "${CONFIG_JSON}" 2>/dev/null | sort -u | tr '\n' ' ')
+
+  # 根据 network_mode 确定要保留和删除的类型
+  local types_to_remove=""
+  case "$target_mode" in
+    tproxy)
+      # 保留 tproxy，删除 tun 和 redirect
+      types_to_remove="tun redirect"
+      ;;
+    redirect)
+      # 保留 redirect，删除 tun 和 tproxy
+      types_to_remove="tun tproxy"
+      ;;
+    tun)
+      # 保留 tun，删除 tproxy 和 redirect
+      types_to_remove="tproxy redirect"
+      ;;
+    *)
+      log error "Unknown network_mode: ${target_mode}"
+      return 1
+      ;;
+  esac
+
+  # 检查是否有需要删除的 inbound
+  local has_removals=0
+  for type in $types_to_remove; do
+    if echo "$all_types" | grep -qw "$type"; then
+      has_removals=1
+      [ "$quiet" = "false" ] && log warn "Found mismatched inbound type: ${type} (network_mode is ${target_mode})"
+    fi
+  done
+
+  # 如果没有需要删除的，直接返回
+  if [ $has_removals -eq 0 ]; then
+    [ "$quiet" = "false" ] && log info "No mismatched inbound configurations found"
+    rm -f "${backup_file}" 2>/dev/null
+    return 0
+  fi
+
+  # 使用 jq 删除不匹配的 inbound
+  [ "$quiet" = "false" ] && log info "Removing mismatched inbound configurations..."
+
+  # 逐个删除不匹配的类型
+  local temp_file="${CONFIG_JSON}.tmp"
+  local current_file="${CONFIG_JSON}"
+
+  for type in $types_to_remove; do
+    [ "$quiet" = "false" ] && log info "Removing inbound type: ${type}"
+
+    if ${JQ_PATH} ".inbounds |= map(select(.type != \"${type}\"))" "${current_file}" > "${temp_file}" 2>/dev/null; then
+      mv "${temp_file}" "${current_file}"
+    else
+      log error "Failed to remove inbound type: ${type}"
+      log error "Restoring from backup..."
+      mv "${backup_file}" "${CONFIG_JSON}"
+      rm -f "${temp_file}" 2>/dev/null
+      return 1
+    fi
+  done
+
+  [ "$quiet" = "false" ] && log info "Successfully removed mismatched inbound configurations"
+  [ "$quiet" = "false" ] && log info "Backup saved to: ${backup_file}"
+  return 0
+}
+
 # -------------------- 检查配置一致性 --------------------
 validate_config_consistency() {
   local quiet="${1:-false}"
+
+  # 自动清理不匹配的 inbound 配置
+  # 检查是否存在不匹配的 inbound 类型
+  local need_cleanup=0
+
+  case "$network_mode" in
+    tproxy)
+      # 如果是 tproxy 模式但有 tun 或 redirect inbound
+      if [ -n "$tun_device" ] || [ -n "$redir_port" ]; then
+        need_cleanup=1
+      fi
+      ;;
+    redirect)
+      # 如果是 redirect 模式但有 tun 或 tproxy inbound
+      if [ -n "$tun_device" ] || [ -n "$tproxy_port" ]; then
+        need_cleanup=1
+      fi
+      ;;
+    tun)
+      # 如果是 tun 模式但有 tproxy 或 redirect inbound
+      if [ -n "$tproxy_port" ] || [ -n "$redir_port" ]; then
+        need_cleanup=1
+      fi
+      ;;
+  esac
+
+  # 如果需要清理，执行清理操作
+  if [ $need_cleanup -eq 1 ]; then
+    [ "$quiet" = "false" ] && log warn "Detected mismatched inbound configuration"
+    [ "$quiet" = "false" ] && log warn "  - network_mode in settings.ini: ${network_mode}"
+    [ "$quiet" = "false" ] && log warn "  - Removing incompatible inbound types from config.json"
+
+    if remove_mismatched_inbounds "$network_mode" "$quiet"; then
+      # 重新加载配置以获取更新后的值
+      load_config_json "true"
+    else
+      log error "Failed to clean up mismatched inbound configurations"
+      return 1
+    fi
+  fi
 
   # 重要：如果 config.json 中有 TUN inbound，sing-box 需要完整 root 权限
   # 无论 network_mode 设置为什么，都需要调整启动方式

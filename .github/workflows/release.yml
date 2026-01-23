@@ -34,6 +34,6 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: ${{ steps.build.outputs.zip_file }}
-          name: Release ${{ steps.build.outputs.version }}
+          name: ${{ steps.build.outputs.version }}
           draft: false
           prerelease: false

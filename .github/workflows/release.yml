@@ -1,0 +1,39 @@
+name: Release
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Build
+        id: build
+        run: |
+          version="$(cat module.prop | grep 'version=' | awk -F '=' '{print $2}')"
+          id="$(cat module.prop | grep 'id=' | awk -F '=' '{print $2}')"
+          zip_file="${id}-${version}.zip"
+
+          zip -r -o -X -ll "$zip_file" ./ \
+            -x '.git/*' \
+            -x '.github/*' \
+            -x 'docs/*' \
+            -x 'build.sh' \
+            -x 'README.md' \
+            -x 'LICENSE'
+
+          echo "zip_file=$zip_file" >> $GITHUB_OUTPUT
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ${{ steps.build.outputs.zip_file }}
+          name: Release ${{ steps.build.outputs.version }}
+          draft: false
+          prerelease: false
